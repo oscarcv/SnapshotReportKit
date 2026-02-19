@@ -209,6 +209,14 @@ struct LoginSnapshots {
       reportName: "iOS Snapshot Tests",
       metadata: ["platform": "iOS", "suite": "Login"]
     )
+    configureSnapshotAssertionDefaults(
+      .init(
+        device: .iPhone13,
+        configuredOSMajorVersion: 26,
+        captureHeight: .large,
+        highContrastReport: false
+      )
+    )
   }()
 
   @Test("login screen light/dark")
@@ -217,9 +225,7 @@ struct LoginSnapshots {
 
     let failures = assertSnapshot(
       of: LoginViewController(),
-      device: .iPhone13,
-      supportedOSMajorVersions: [15, 16, 17, 18, 26],
-      captureHeight: .large
+      highContrastReport: false
     )
 
     #expect(failures.isEmpty)
@@ -231,10 +237,8 @@ struct LoginSnapshots {
 
     let failures = assertSnapshot(
       of: LoginViewController(),
-      device: .iPhone13,
-      supportedOSMajorVersions: [15, 16, 17, 18, 26],
       captureHeight: .complete,
-      appearances: SnapshotAppearanceConfiguration.all
+      highContrastReport: true
     )
 
     #expect(failures.isEmpty)
@@ -280,8 +284,10 @@ final class LoginSnapshotsTests: XCTestCase {
 `assertSnapshot` configuration highlights:
 
 - `device`: validates compatibility against current iOS major version (can override with `osMajorVersion`).
-- `supportedOSMajorVersions`: customize supported runtime versions (default: `15, 16, 17, 18, 26`).
+- `configuredOSMajorVersion`: a single configured runtime major version (default from global assertion defaults).
+- Global defaults are centralized with `configureSnapshotAssertionDefaults(...)`, and per-assert overrides remain optional.
 - `captureHeight`: choose `.device`, `.large`, `.complete`, or `.points(Double)` for taller captures.
+- `highContrastReport: true` forces high-contrast variants and uses order: high contrast light, light, dark, high contrast dark.
 - `missingReferencePolicy`: defaults to `.recordOnMissingReference` (auto-record if asset is missing).
 - `diffing`: defaults to `CoreImageDifferenceDiffing()` and attaches an advanced diff PNG on failures.
 

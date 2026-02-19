@@ -11,9 +11,58 @@ import Testing
 import UIKit
 #endif
 
-public enum MissingReferencePolicy: Sendable {
+public enum MissingReferencePolicy: Sendable, Equatable {
     case recordOnMissingReference
     case fail
+}
+
+public struct SnapshotAssertionDefaults: Sendable, Equatable {
+    public var device: SnapshotDevicePreset
+    public var configuredOSMajorVersion: Int
+    public var captureHeight: SnapshotCaptureHeight
+    public var highContrastReport: Bool
+    public var missingReferencePolicy: MissingReferencePolicy
+
+    public init(
+        device: SnapshotDevicePreset = .iPhoneSe,
+        configuredOSMajorVersion: Int = SnapshotDevicePreset.defaultConfiguredOSMajorVersion,
+        captureHeight: SnapshotCaptureHeight = .device,
+        highContrastReport: Bool = false,
+        missingReferencePolicy: MissingReferencePolicy = .recordOnMissingReference
+    ) {
+        self.device = device
+        self.configuredOSMajorVersion = configuredOSMajorVersion
+        self.captureHeight = captureHeight
+        self.highContrastReport = highContrastReport
+        self.missingReferencePolicy = missingReferencePolicy
+    }
+}
+
+private final class _SnapshotAssertionDefaultsBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = SnapshotAssertionDefaults()
+
+    func set(_ defaults: SnapshotAssertionDefaults) {
+        lock.lock()
+        value = defaults
+        lock.unlock()
+    }
+
+    func get() -> SnapshotAssertionDefaults {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+}
+
+private let _snapshotAssertionDefaultsBox = _SnapshotAssertionDefaultsBox()
+
+public func configureSnapshotAssertionDefaults(_ defaults: SnapshotAssertionDefaults) {
+    _snapshotAssertionDefaultsBox.set(defaults)
+}
+
+private func _snapshotAssertionDefaults() -> SnapshotAssertionDefaults {
+    _snapshotAssertionDefaultsBox.get()
 }
 
 public enum SnapshotAppearanceConfiguration: String, CaseIterable, Sendable {
@@ -24,6 +73,7 @@ public enum SnapshotAppearanceConfiguration: String, CaseIterable, Sendable {
 
     public static let defaultPair: [SnapshotAppearanceConfiguration] = [.light, .dark]
     public static let all: [SnapshotAppearanceConfiguration] = [.light, .dark, .highContrastLight, .highContrastDark]
+    public static let reportOrder: [SnapshotAppearanceConfiguration] = [.highContrastLight, .light, .dark, .highContrastDark]
 
     public var nameSuffix: String {
         switch self {
@@ -115,27 +165,40 @@ public func assertReportingSnapshot<Value, Format>(
 @discardableResult
 public func assertSnapshot(
     of viewController: @autoclosure () throws -> UIViewController,
-    device: SnapshotDevicePreset = .iPhoneSe,
-    supportedOSMajorVersions: Set<Int> = SnapshotDevicePreset.defaultSupportedOSMajorVersions,
-    captureHeight: SnapshotCaptureHeight = .device,
+    device: SnapshotDevicePreset? = nil,
+    configuredOSMajorVersion: Int? = nil,
+    captureHeight: SnapshotCaptureHeight? = nil,
+    highContrastReport: Bool? = nil,
     osMajorVersion: Int? = nil,
-    appearances: [SnapshotAppearanceConfiguration] = SnapshotAppearanceConfiguration.defaultPair,
+    appearances: [SnapshotAppearanceConfiguration]? = nil,
     suiteName: String? = nil,
     className: String? = nil,
     named: String? = nil,
     record: Bool = false,
     timeout: TimeInterval = 5,
-    missingReferencePolicy: MissingReferencePolicy = .recordOnMissingReference,
+    missingReferencePolicy: MissingReferencePolicy? = nil,
     diffing: any SnapshotImageDiffing = CoreImageDifferenceDiffing(),
     file: StaticString = #filePath,
     testName: String = #function,
     line: UInt = #line
 ) -> [String] {
+    let defaults = _snapshotAssertionDefaults()
+    let resolvedDevice = device ?? defaults.device
+    let resolvedConfiguredOSMajorVersion = configuredOSMajorVersion ?? defaults.configuredOSMajorVersion
+    let resolvedCaptureHeight = captureHeight ?? defaults.captureHeight
+    let resolvedHighContrastReport = highContrastReport ?? defaults.highContrastReport
+    let resolvedAppearances = appearances ?? (
+        resolvedHighContrastReport
+        ? SnapshotAppearanceConfiguration.reportOrder
+        : SnapshotAppearanceConfiguration.defaultPair
+    )
+    let resolvedMissingReferencePolicy = missingReferencePolicy ?? defaults.missingReferencePolicy
+
     let runtimeMajor = osMajorVersion ?? ProcessInfo.processInfo.operatingSystemVersion.majorVersion
     let deviceConfiguration = SnapshotDeviceConfiguration(
-        preset: device,
-        supportedOSMajorVersions: supportedOSMajorVersions,
-        captureHeight: captureHeight
+        preset: resolvedDevice,
+        configuredOSMajorVersion: resolvedConfiguredOSMajorVersion,
+        captureHeight: resolvedCaptureHeight
     )
 
     do {
@@ -158,7 +221,7 @@ public func assertSnapshot(
     var failures: [String] = []
     let baseConfig = deviceConfiguration.viewImageConfig()
 
-    for appearance in appearances {
+    for appearance in resolvedAppearances {
         let snapshotName = [named, appearance.nameSuffix]
             .compactMap { $0 }
             .joined(separator: "-")
@@ -182,7 +245,7 @@ public func assertSnapshot(
             named: snapshotName,
             record: record,
             timeout: timeout,
-            missingReferencePolicy: missingReferencePolicy,
+            missingReferencePolicy: resolvedMissingReferencePolicy,
             attachSuccessfulSnapshots: true,
             imageDiffing: diffing,
             file: file,
@@ -200,6 +263,10 @@ public func assertSnapshot(
 #endif
 
 public extension XCTestCase {
+    func configureSnapshotAssertionDefaults(_ defaults: SnapshotAssertionDefaults) {
+        SnapshotReportSnapshotTesting.configureSnapshotAssertionDefaults(defaults)
+    }
+
     func configureSnapshotReport(
         reportName: String = "Snapshot Tests",
         outputJSONPath: String? = nil,
@@ -245,15 +312,16 @@ public extension XCTestCase {
     @discardableResult
     func assertSnapshot(
         of viewController: @autoclosure () throws -> UIViewController,
-        device: SnapshotDevicePreset = .iPhoneSe,
-        supportedOSMajorVersions: Set<Int> = SnapshotDevicePreset.defaultSupportedOSMajorVersions,
-        captureHeight: SnapshotCaptureHeight = .device,
+        device: SnapshotDevicePreset? = nil,
+        configuredOSMajorVersion: Int? = nil,
+        captureHeight: SnapshotCaptureHeight? = nil,
+        highContrastReport: Bool? = nil,
         osMajorVersion: Int? = nil,
-        appearances: [SnapshotAppearanceConfiguration] = SnapshotAppearanceConfiguration.defaultPair,
+        appearances: [SnapshotAppearanceConfiguration]? = nil,
         named: String? = nil,
         record: Bool = false,
         timeout: TimeInterval = 5,
-        missingReferencePolicy: MissingReferencePolicy = .recordOnMissingReference,
+        missingReferencePolicy: MissingReferencePolicy? = nil,
         diffing: any SnapshotImageDiffing = CoreImageDifferenceDiffing(),
         file: StaticString = #filePath,
         testName: String = #function,
@@ -271,8 +339,9 @@ public extension XCTestCase {
         return SnapshotReportSnapshotTesting.assertSnapshot(
             of: value,
             device: device,
-            supportedOSMajorVersions: supportedOSMajorVersions,
+            configuredOSMajorVersion: configuredOSMajorVersion,
             captureHeight: captureHeight,
+            highContrastReport: highContrastReport,
             osMajorVersion: osMajorVersion,
             appearances: appearances,
             suiteName: String(describing: type(of: self)),

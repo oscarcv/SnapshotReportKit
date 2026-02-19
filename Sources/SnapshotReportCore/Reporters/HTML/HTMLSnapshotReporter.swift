@@ -90,7 +90,8 @@ struct HTMLRenderer {
                 [
                     "name": suite.name,
                     "tests": suite.tests.map { test in
-                        [
+                        let orderedAttachments = sortAttachmentsForVariantDisplay(test.attachments)
+                        return [
                             "id": test.id,
                             "name": test.name,
                             "className": test.className,
@@ -102,7 +103,7 @@ struct HTMLRenderer {
                                 "line": test.failure?.line.map(String.init) ?? "",
                                 "diff": test.failure?.diff ?? ""
                             ],
-                            "attachments": test.attachments.map { attachment in
+                            "attachments": orderedAttachments.map { attachment in
                                 let fullPath = outputDirectory.appendingPathComponent(attachment.path).path
                                 let textContent: String
                                 if attachment.type == .text || attachment.type == .dump {
@@ -115,7 +116,8 @@ struct HTMLRenderer {
                                     "name": attachment.name,
                                     "type": attachment.type.rawValue,
                                     "path": attachment.path,
-                                    "content": textContent
+                                    "content": textContent,
+                                    "variantOrder": variantOrder(for: attachment.path)
                                 ]
                             }
                         ]
@@ -127,5 +129,28 @@ struct HTMLRenderer {
 
     private func sanitize(_ value: String) -> String {
         value.replacingOccurrences(of: "[^a-zA-Z0-9._-]", with: "-", options: .regularExpression)
+    }
+
+    private func sortAttachmentsForVariantDisplay(_ attachments: [SnapshotAttachment]) -> [SnapshotAttachment] {
+        attachments.sorted { lhs, rhs in
+            let leftOrder = variantOrder(for: lhs.path)
+            let rightOrder = variantOrder(for: rhs.path)
+
+            if leftOrder == rightOrder {
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+            return leftOrder < rightOrder
+        }
+    }
+
+    private func variantOrder(for path: String) -> Int {
+        let value = path.lowercased()
+
+        if value.contains("high-contrast-light") { return 0 }
+        if value.contains("light") && value.contains("high-contrast") == false { return 1 }
+        if value.contains("dark") && value.contains("high-contrast") == false { return 2 }
+        if value.contains("high-contrast-dark") { return 3 }
+
+        return 999
     }
 }

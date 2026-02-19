@@ -9,9 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Configurable device compatibility policy via `supportedOSMajorVersions` with defaults `15, 16, 17, 18, 26`.
+- Configurable device compatibility policy via a single `configuredOSMajorVersion` with allowed versions `15, 16, 17, 18, 26`.
 - Capture height override support for image snapshots: `.device`, `.large`, `.complete`, `.points(Double)`.
 - Swift Testing example docs and test coverage for parallel-safe collector recording.
+- Global assertion defaults API (`configureSnapshotAssertionDefaults`) for centralized device/version/high-contrast policy.
+- High-contrast reporting toggle (`highContrastReport`) that captures ordered variants when enabled.
+- HTML passed-test variant rendering in horizontal order: high contrast light, light, dark, high contrast dark.
 
 ## [0.2.0] - 2026-02-19
 

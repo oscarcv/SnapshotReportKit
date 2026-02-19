@@ -13,43 +13,52 @@ public enum SnapshotDevicePreset: String, CaseIterable, Sendable {
     case iPhone13
     case iPhone13ProMax
 
-    public static let defaultSupportedOSMajorVersions: Set<Int> = [15, 16, 17, 18, 26]
+    public static let allowedOSMajorVersions: Set<Int> = [15, 16, 17, 18, 26]
+    public static let defaultConfiguredOSMajorVersion: Int = 26
 }
 
 public struct SnapshotDeviceConfiguration: Sendable, Equatable {
     public var preset: SnapshotDevicePreset
-    public var supportedOSMajorVersions: Set<Int>
+    public var configuredOSMajorVersion: Int
     public var captureHeight: SnapshotCaptureHeight
 
     public init(
         preset: SnapshotDevicePreset = .iPhoneSe,
-        supportedOSMajorVersions: Set<Int> = SnapshotDevicePreset.defaultSupportedOSMajorVersions,
+        configuredOSMajorVersion: Int = SnapshotDevicePreset.defaultConfiguredOSMajorVersion,
         captureHeight: SnapshotCaptureHeight = .device
     ) {
         self.preset = preset
-        self.supportedOSMajorVersions = supportedOSMajorVersions
+        self.configuredOSMajorVersion = configuredOSMajorVersion
         self.captureHeight = captureHeight
     }
 
     public func validateCompatibility(osMajorVersion: Int) throws {
-        guard supportedOSMajorVersions.contains(osMajorVersion) else {
+        guard SnapshotDevicePreset.allowedOSMajorVersions.contains(configuredOSMajorVersion) else {
             throw SnapshotDeviceConfigurationError.unsupportedRuntime(
                 device: preset.rawValue,
                 osMajorVersion: osMajorVersion,
-                supportedVersions: supportedOSMajorVersions.sorted()
+                configuredOSMajorVersion: configuredOSMajorVersion
+            )
+        }
+
+        guard configuredOSMajorVersion == osMajorVersion else {
+            throw SnapshotDeviceConfigurationError.unsupportedRuntime(
+                device: preset.rawValue,
+                osMajorVersion: osMajorVersion,
+                configuredOSMajorVersion: configuredOSMajorVersion
             )
         }
     }
 }
 
 public enum SnapshotDeviceConfigurationError: Error, CustomStringConvertible, Sendable {
-    case unsupportedRuntime(device: String, osMajorVersion: Int, supportedVersions: [Int])
+    case unsupportedRuntime(device: String, osMajorVersion: Int, configuredOSMajorVersion: Int)
 
     public var description: String {
         switch self {
-        case .unsupportedRuntime(let device, let osMajorVersion, let supportedVersions):
-            let supported = supportedVersions.map(String.init).joined(separator: ", ")
-            return "Incompatible snapshot device/runtime: \(device) on iOS \(osMajorVersion).x is unsupported. Supported versions: \(supported)."
+        case .unsupportedRuntime(let device, let osMajorVersion, let configuredOSMajorVersion):
+            let supported = SnapshotDevicePreset.allowedOSMajorVersions.sorted().map(String.init).joined(separator: ", ")
+            return "Incompatible snapshot device/runtime: \(device) on iOS \(osMajorVersion).x is unsupported. Configured iOS major version: \(configuredOSMajorVersion). Allowed versions: \(supported)."
         }
     }
 }

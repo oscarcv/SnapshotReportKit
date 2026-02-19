@@ -177,11 +177,24 @@
       gap: 0.5rem;
     }
 
+    .attachments.passed-variants {
+      display: flex;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      gap: 0.65rem;
+      align-items: stretch;
+    }
+
     .attachment {
       border: 1px solid var(--border);
       border-radius: 8px;
       background: #111b24;
       padding: 0.5rem;
+    }
+
+    .attachments.passed-variants .attachment {
+      min-width: 260px;
+      flex: 0 0 260px;
     }
 
     .attachment .name {
@@ -280,9 +293,9 @@ File: {{ test.failure.file }}{% if test.failure.line != "" %}:{{ test.failure.li
                     {% endif %}
 
                     {% if test.attachments.count > 0 %}
-                      <div class="attachments">
+                      <div class="attachments{% if test.status == "passed" %} passed-variants{% endif %}">
                         {% for attachment in test.attachments %}
-                          <div class="attachment">
+                          <div class="attachment" style="order: {{ attachment.variantOrder }};">
                             <div class="name">{{ attachment.name }} ({{ attachment.type }})</div>
                             {% if attachment.type == "png" %}
                               <img src="{{ attachment.path }}" alt="{{ attachment.name }}" />

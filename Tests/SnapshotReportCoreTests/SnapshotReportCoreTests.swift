@@ -115,3 +115,62 @@ func collectorSupportsParallelRecording() async {
     #expect(report.summary.failed == 0)
     #expect(report.suites.count == 2)
 }
+
+@Test
+func htmlReporterOrdersPassedVariantAttachmentsHorizontally() throws {
+    let outputDirectory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("SnapshotReportCoreTests-html-order-\(UUID().uuidString)", isDirectory: true)
+    let sourceDirectory = outputDirectory.appendingPathComponent("sources", isDirectory: true)
+    try FileManager.default.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: outputDirectory) }
+
+    let files = [
+        "view.dark.png",
+        "view.high-contrast-dark.png",
+        "view.light.png",
+        "view.high-contrast-light.png",
+    ]
+
+    for file in files {
+        try Data("x".utf8).write(to: sourceDirectory.appendingPathComponent(file))
+    }
+
+    let report = SnapshotReport(
+        name: "Ordering",
+        suites: [
+            SnapshotSuite(name: "Suite", tests: [
+                SnapshotTestCase(
+                    name: "testVariants",
+                    className: "SuiteTests",
+                    status: .passed,
+                    duration: 0.01,
+                    attachments: files.map {
+                        SnapshotAttachment(name: "Snapshot", type: .png, path: sourceDirectory.appendingPathComponent($0).path)
+                    }
+                )
+            ])
+        ]
+    )
+
+    try SnapshotReportWriters.write(report, format: .html, options: .init(outputDirectory: outputDirectory))
+    let htmlPath = outputDirectory.appendingPathComponent("html/index.html").path
+    let html = try String(contentsOfFile: htmlPath, encoding: .utf8)
+
+    let expected = [
+        "high-contrast-light",
+        "light",
+        "dark",
+        "high-contrast-dark",
+    ]
+
+    var lastIndex = html.startIndex
+    for token in expected {
+        guard let range = html.range(of: token, range: lastIndex..<html.endIndex) else {
+            Issue.record("Expected token \(token) not found in html output")
+            return
+        }
+        lastIndex = range.upperBound
+    }
+
+    #expect(html.contains("attachments passed-variants"))
+}
