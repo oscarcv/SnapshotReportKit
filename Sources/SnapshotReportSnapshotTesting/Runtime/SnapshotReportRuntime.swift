@@ -19,13 +19,20 @@ public struct SnapshotReportRuntimeConfiguration: Sendable {
         let output: String
         if let explicit = env["SNAPSHOT_REPORT_OUTPUT"], !explicit.isEmpty {
             output = explicit
+        } else if let outputDir = env["SNAPSHOT_REPORT_OUTPUT_DIR"], !outputDir.isEmpty {
+            let runFileName = makeRunFileName(reportName: env["SNAPSHOT_REPORT_NAME"] ?? "Snapshot Tests")
+            output = URL(fileURLWithPath: outputDir)
+                .appendingPathComponent(runFileName)
+                .path
         } else if let srcRoot = env["SRCROOT"], !srcRoot.isEmpty {
             output = URL(fileURLWithPath: srcRoot)
-                .appendingPathComponent(".artifacts/snapshot-report-run.json")
+                .appendingPathComponent(".artifacts/snapshot-runs")
+                .appendingPathComponent(makeRunFileName(reportName: env["SNAPSHOT_REPORT_NAME"] ?? "Snapshot Tests"))
                 .path
         } else {
             output = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-                .appendingPathComponent("snapshot-report-run.json")
+                .appendingPathComponent("snapshot-runs")
+                .appendingPathComponent(makeRunFileName(reportName: env["SNAPSHOT_REPORT_NAME"] ?? "Snapshot Tests"))
                 .path
         }
 
@@ -34,8 +41,17 @@ public struct SnapshotReportRuntimeConfiguration: Sendable {
         var metadata: [String: String] = [:]
         if let scheme = env["SCHEME_NAME"], !scheme.isEmpty { metadata["scheme"] = scheme }
         if let branch = env["GIT_BRANCH"], !branch.isEmpty { metadata["branch"] = branch }
+        if let testPlan = env["TEST_PLAN_NAME"], !testPlan.isEmpty { metadata["testPlan"] = testPlan }
+        if let target = env["TARGET_NAME"], !target.isEmpty { metadata["target"] = target }
+        if let bundle = Bundle.main.bundleIdentifier, !bundle.isEmpty { metadata["bundle"] = bundle }
 
         return .init(reportName: reportName, outputJSONPath: output, metadata: metadata)
+    }
+
+    private static func makeRunFileName(reportName: String) -> String {
+        let safeName = reportName
+            .replacingOccurrences(of: "[^a-zA-Z0-9._-]", with: "-", options: .regularExpression)
+        return "\(safeName)-\(ProcessInfo.processInfo.processIdentifier).json"
     }
 }
 
@@ -71,7 +87,8 @@ public actor SnapshotReportRuntime {
         test: String,
         className: String,
         duration: TimeInterval,
-        failure: String?
+        failure: String?,
+        attachments: [SnapshotAttachment] = []
     ) async {
         hasRecords = true
 
@@ -81,14 +98,16 @@ public actor SnapshotReportRuntime {
                 test: test,
                 className: className,
                 duration: duration,
-                message: failure
+                message: failure,
+                attachments: attachments
             )
         } else {
             await collector.recordSuccess(
                 suite: suite,
                 test: test,
                 className: className,
-                duration: duration
+                duration: duration,
+                attachments: attachments
             )
         }
     }
@@ -101,7 +120,18 @@ public actor SnapshotReportRuntime {
 
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            try await collector.writeJSON(to: destination, metadata: configuration.metadata)
+            let currentReport = await collector.buildReport(metadata: configuration.metadata)
+
+            if FileManager.default.fileExists(atPath: destination.path) {
+                let existing = try SnapshotReportIO.loadReport(from: destination)
+                let merged = SnapshotReportAggregator.merge(
+                    reports: [existing, currentReport],
+                    name: currentReport.name
+                )
+                try SnapshotReportIO.saveReport(merged, to: destination)
+            } else {
+                try await collector.writeJSON(to: destination, metadata: configuration.metadata)
+            }
         } catch {
             fputs("SnapshotReportRuntime flush error: \(error)\n", stderr)
         }

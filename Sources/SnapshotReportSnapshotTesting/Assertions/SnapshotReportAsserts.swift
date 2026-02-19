@@ -1,10 +1,20 @@
 import Foundation
 import XCTest
+import SnapshotReportCore
 import SnapshotTesting
+
+#if canImport(Testing)
+import Testing
+#endif
 
 #if canImport(UIKit)
 import UIKit
 #endif
+
+public enum MissingReferencePolicy: Sendable {
+    case recordOnMissingReference
+    case fail
+}
 
 public enum SnapshotAppearanceConfiguration: String, CaseIterable, Sendable {
     case light
@@ -52,20 +62,147 @@ public enum SnapshotAppearanceConfiguration: String, CaseIterable, Sendable {
     #endif
 }
 
+public func configureSnapshotReport(
+    reportName: String = "Snapshot Tests",
+    outputJSONPath: String? = nil,
+    metadata: [String: String] = [:]
+) {
+    let defaultConfiguration = SnapshotReportRuntimeConfiguration.default()
+    let path = outputJSONPath ?? defaultConfiguration.outputJSONPath
+    let final = SnapshotReportRuntimeConfiguration(reportName: reportName, outputJSONPath: path, metadata: metadata)
+
+    Task {
+        await SnapshotReportRuntime.shared.configure(final)
+        await SnapshotReportRuntime.shared.installObserverIfNeeded()
+    }
+}
+
+@discardableResult
+public func assertReportingSnapshot<Value, Format>(
+    of value: @autoclosure () throws -> Value,
+    as snapshotting: Snapshotting<Value, Format>,
+    suiteName: String? = nil,
+    className: String? = nil,
+    named: String? = nil,
+    record: Bool = false,
+    timeout: TimeInterval = 5,
+    missingReferencePolicy: MissingReferencePolicy = .recordOnMissingReference,
+    attachSuccessfulSnapshots: Bool = true,
+    file: StaticString = #filePath,
+    testName: String = #function,
+    line: UInt = #line
+) -> String? {
+    let inferredSuite = suiteName ?? URL(fileURLWithPath: file.description).deletingPathExtension().lastPathComponent
+    let inferredClass = className ?? inferredSuite
+
+    return _assertReportingSnapshot(
+        of: { try value() },
+        as: snapshotting,
+        suiteName: inferredSuite,
+        className: inferredClass,
+        named: named,
+        record: record,
+        timeout: timeout,
+        missingReferencePolicy: missingReferencePolicy,
+        attachSuccessfulSnapshots: attachSuccessfulSnapshots,
+        file: file,
+        testName: testName,
+        line: line
+    )
+}
+
+#if canImport(UIKit)
+@discardableResult
+public func assertSnapshot(
+    of viewController: @autoclosure () throws -> UIViewController,
+    device: SnapshotDevicePreset = .iPhoneSe,
+    osMajorVersion: Int? = nil,
+    appearances: [SnapshotAppearanceConfiguration] = SnapshotAppearanceConfiguration.defaultPair,
+    suiteName: String? = nil,
+    className: String? = nil,
+    named: String? = nil,
+    record: Bool = false,
+    timeout: TimeInterval = 5,
+    missingReferencePolicy: MissingReferencePolicy = .recordOnMissingReference,
+    diffing: any SnapshotImageDiffing = CoreImageDifferenceDiffing(),
+    file: StaticString = #filePath,
+    testName: String = #function,
+    line: UInt = #line
+) -> [String] {
+    let runtimeMajor = osMajorVersion ?? ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+
+    do {
+        try device.validateCompatibility(osMajorVersion: runtimeMajor)
+    } catch {
+        let message = "Snapshot device configuration error: \(error)"
+        _recordFrameworkIssue(message, file: file, line: line)
+        return [message]
+    }
+
+    let viewControllerValue: UIViewController
+    do {
+        viewControllerValue = try viewController()
+    } catch {
+        let message = "Failed to build UIViewController under test: \(error)"
+        _recordFrameworkIssue(message, file: file, line: line)
+        return [message]
+    }
+
+    var failures: [String] = []
+    let baseConfig = device.viewImageConfig()
+
+    for appearance in appearances {
+        let snapshotName = [named, appearance.nameSuffix]
+            .compactMap { $0 }
+            .joined(separator: "-")
+
+        let configWithTraits = ViewImageConfig(
+            safeArea: baseConfig.safeArea,
+            size: baseConfig.size,
+            traits: UITraitCollection(traitsFrom: [baseConfig.traits, appearance.traitCollection])
+        )
+
+        let strategy = Snapshotting<UIViewController, UIImage>.image(
+            on: configWithTraits,
+            traits: appearance.traitCollection
+        )
+
+        let failure = _assertReportingSnapshot(
+            of: { viewControllerValue },
+            as: strategy,
+            suiteName: suiteName ?? String(describing: type(of: viewControllerValue)),
+            className: className ?? String(describing: type(of: viewControllerValue)),
+            named: snapshotName,
+            record: record,
+            timeout: timeout,
+            missingReferencePolicy: missingReferencePolicy,
+            attachSuccessfulSnapshots: true,
+            imageDiffing: diffing,
+            file: file,
+            testName: testName,
+            line: line
+        )
+
+        if let failure {
+            failures.append("[\(appearance.rawValue)] \(failure)")
+        }
+    }
+
+    return failures
+}
+#endif
+
 public extension XCTestCase {
     func configureSnapshotReport(
         reportName: String = "Snapshot Tests",
         outputJSONPath: String? = nil,
         metadata: [String: String] = [:]
     ) {
-        let defaultConfiguration = SnapshotReportRuntimeConfiguration.default()
-        let path = outputJSONPath ?? defaultConfiguration.outputJSONPath
-        let final = SnapshotReportRuntimeConfiguration(reportName: reportName, outputJSONPath: path, metadata: metadata)
-
-        Task {
-            await SnapshotReportRuntime.shared.configure(final)
-            await SnapshotReportRuntime.shared.installObserverIfNeeded()
-        }
+        SnapshotReportSnapshotTesting.configureSnapshotReport(
+            reportName: reportName,
+            outputJSONPath: outputJSONPath,
+            metadata: metadata
+        )
     }
 
     @discardableResult
@@ -75,150 +212,309 @@ public extension XCTestCase {
         named: String? = nil,
         record: Bool = false,
         timeout: TimeInterval = 5,
+        missingReferencePolicy: MissingReferencePolicy = .recordOnMissingReference,
+        attachSuccessfulSnapshots: Bool = true,
         file: StaticString = #filePath,
         testName: String = #function,
         line: UInt = #line
     ) -> String? {
-        let start = Date()
-        let suite = String(describing: type(of: self))
-        let normalizedTestName = normalize(testName: testName)
-
-        let evaluated: Value
-        do {
-            evaluated = try value()
-        } catch {
-            let failureMessage = "Failed to build value under test: \(error)"
-            XCTFail(failureMessage, file: file, line: line)
-            Task {
-                await SnapshotReportRuntime.shared.installObserverIfNeeded()
-                await SnapshotReportRuntime.shared.record(
-                    suite: suite,
-                    test: normalizedTestName,
-                    className: suite,
-                    duration: Date().timeIntervalSince(start),
-                    failure: failureMessage
-                )
-            }
-            return failureMessage
-        }
-
-        let failureMessage = verifySnapshot(
-            of: evaluated,
+        _assertReportingSnapshot(
+            of: { try value() },
             as: snapshotting,
+            suiteName: String(describing: type(of: self)),
+            className: String(describing: type(of: self)),
             named: named,
             record: record,
             timeout: timeout,
+            missingReferencePolicy: missingReferencePolicy,
+            attachSuccessfulSnapshots: attachSuccessfulSnapshots,
             file: file,
-            testName: normalizedTestName,
+            testName: testName,
             line: line
         )
-
-        if let failureMessage {
-            XCTFail(failureMessage, file: file, line: line)
-        }
-
-        let duration = Date().timeIntervalSince(start)
-        Task {
-            await SnapshotReportRuntime.shared.installObserverIfNeeded()
-            await SnapshotReportRuntime.shared.record(
-                suite: suite,
-                test: normalizedTestName,
-                className: suite,
-                duration: duration,
-                failure: failureMessage
-            )
-        }
-
-        return failureMessage
     }
 
     #if canImport(UIKit)
     @discardableResult
-    func assertReportingSnapshotAppearances(
+    func assertSnapshot(
         of viewController: @autoclosure () throws -> UIViewController,
-        on config: ViewImageConfig = .iPhoneSe,
+        device: SnapshotDevicePreset = .iPhoneSe,
+        osMajorVersion: Int? = nil,
         appearances: [SnapshotAppearanceConfiguration] = SnapshotAppearanceConfiguration.defaultPair,
         named: String? = nil,
         record: Bool = false,
         timeout: TimeInterval = 5,
+        missingReferencePolicy: MissingReferencePolicy = .recordOnMissingReference,
+        diffing: any SnapshotImageDiffing = CoreImageDifferenceDiffing(),
         file: StaticString = #filePath,
         testName: String = #function,
         line: UInt = #line
     ) -> [String] {
-        var failures: [String] = []
-
         let value: UIViewController
         do {
             value = try viewController()
         } catch {
             let message = "Failed to build UIViewController under test: \(error)"
-            XCTFail(message, file: file, line: line)
+            _recordFrameworkIssue(message, file: file, line: line)
             return [message]
         }
 
-        for appearance in appearances {
-            let snapshotName = [named, appearance.nameSuffix]
-                .compactMap { $0 }
-                .joined(separator: "-")
-
-            let strategy = Snapshotting<UIViewController, UIImage>.image(
-                on: config,
-                traits: appearance.traitCollection
-            )
-
-            if let failure = assertReportingSnapshot(
-                of: value,
-                as: strategy,
-                named: snapshotName,
-                record: record,
-                timeout: timeout,
-                file: file,
-                testName: testName,
-                line: line
-            ) {
-                failures.append("[\(appearance.rawValue)] \(failure)")
-            }
-        }
-
-        return failures
-    }
-
-    @discardableResult
-    func assertSnapshot(
-        of viewController: @autoclosure () throws -> UIViewController,
-        on config: ViewImageConfig = .iPhoneSe,
-        appearances: [SnapshotAppearanceConfiguration] = SnapshotAppearanceConfiguration.defaultPair,
-        named: String? = nil,
-        record: Bool = false,
-        timeout: TimeInterval = 5,
-        file: StaticString = #filePath,
-        testName: String = #function,
-        line: UInt = #line
-    ) -> [String] {
-        let built: UIViewController
-        do {
-            built = try viewController()
-        } catch {
-            let message = "Failed to build UIViewController under test: \(error)"
-            XCTFail(message, file: file, line: line)
-            return [message]
-        }
-
-        assertReportingSnapshotAppearances(
-            of: built,
-            on: config,
+        return SnapshotReportSnapshotTesting.assertSnapshot(
+            of: value,
+            device: device,
+            osMajorVersion: osMajorVersion,
             appearances: appearances,
+            suiteName: String(describing: type(of: self)),
+            className: String(describing: type(of: self)),
             named: named,
             record: record,
             timeout: timeout,
+            missingReferencePolicy: missingReferencePolicy,
+            diffing: diffing,
             file: file,
             testName: testName,
             line: line
         )
     }
     #endif
+}
 
-    private func normalize(testName: String) -> String {
-        testName.replacingOccurrences(of: "()", with: "")
+@discardableResult
+private func _assertReportingSnapshot<Value, Format>(
+    of value: () throws -> Value,
+    as snapshotting: Snapshotting<Value, Format>,
+    suiteName: String,
+    className: String,
+    named: String? = nil,
+    record: Bool = false,
+    timeout: TimeInterval,
+    missingReferencePolicy: MissingReferencePolicy,
+    attachSuccessfulSnapshots: Bool,
+    imageDiffing: (any SnapshotImageDiffing)? = nil,
+    file: StaticString,
+    testName: String,
+    line: UInt
+) -> String? {
+    let start = Date()
+    let normalizedTestName = _normalize(testName: testName)
+
+    let evaluated: Value
+    do {
+        evaluated = try value()
+    } catch {
+        let failureMessage = "Failed to build value under test: \(error)"
+        _recordFrameworkIssue(failureMessage, file: file, line: line)
+        Task {
+            await SnapshotReportRuntime.shared.installObserverIfNeeded()
+            await SnapshotReportRuntime.shared.record(
+                suite: suiteName,
+                test: normalizedTestName,
+                className: className,
+                duration: Date().timeIntervalSince(start),
+                failure: failureMessage
+            )
+        }
+        return failureMessage
     }
+
+    let failureMessage = verifySnapshot(
+        of: evaluated,
+        as: snapshotting,
+        named: named,
+        record: record,
+        timeout: timeout,
+        file: file,
+        testName: normalizedTestName,
+        line: line
+    )
+
+    let treatedAsSuccess = _shouldTreatAsRecordedSuccess(
+        failureMessage: failureMessage,
+        missingReferencePolicy: missingReferencePolicy
+    )
+
+    let normalizedFailure = treatedAsSuccess ? nil : failureMessage
+    if let normalizedFailure {
+        _recordFrameworkIssue(normalizedFailure, file: file, line: line)
+    }
+
+    var attachments: [SnapshotAttachment] = []
+
+    if let snapshotFileURL = _inferredSnapshotFileURL(
+        file: file,
+        testName: normalizedTestName,
+        named: named,
+        pathExtension: snapshotting.pathExtension
+    ), FileManager.default.fileExists(atPath: snapshotFileURL.path) {
+        if attachSuccessfulSnapshots || normalizedFailure != nil {
+            attachments.append(
+                SnapshotAttachment(
+                    name: "Snapshot",
+                    type: _attachmentType(for: snapshotFileURL.pathExtension),
+                    path: snapshotFileURL.path
+                )
+            )
+        }
+
+        #if canImport(UIKit)
+        if let imageSnapshotting = snapshotting as? Snapshotting<Value, UIImage>,
+           let imageDiffing,
+           let normalizedFailure,
+           let reference = UIImage(contentsOfFile: snapshotFileURL.path),
+           let actual = _materializeSnapshot(value: evaluated, snapshotting: imageSnapshotting, timeout: timeout),
+           let diffImage = imageDiffing.makeDiff(reference: reference, actual: actual),
+           let diffData = diffImage.pngData() {
+            let diffURL = URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent("snapshot-diff-\(UUID().uuidString).png")
+            try? diffData.write(to: diffURL)
+            attachments.append(
+                SnapshotAttachment(
+                    name: "Advanced Diff",
+                    type: .png,
+                    path: diffURL.path
+                )
+            )
+
+            // Keep failure text explicit when diff was generated.
+            if normalizedFailure.contains("difference") == false {
+                attachments.append(
+                    SnapshotAttachment(
+                        name: "Failure Message",
+                        type: .text,
+                        path: _writeTextAttachment(contents: normalizedFailure)
+                    )
+                )
+            }
+        }
+        #endif
+    }
+
+    let duration = Date().timeIntervalSince(start)
+    Task {
+        await SnapshotReportRuntime.shared.installObserverIfNeeded()
+        await SnapshotReportRuntime.shared.record(
+            suite: suiteName,
+            test: normalizedTestName,
+            className: className,
+            duration: duration,
+            failure: normalizedFailure,
+            attachments: attachments
+        )
+    }
+
+    return normalizedFailure
+}
+
+private func _normalize(testName: String) -> String {
+    testName.replacingOccurrences(of: "()", with: "")
+}
+
+private func _sanitizePathComponent(_ value: String) -> String {
+    value.replacingOccurrences(of: "[^a-zA-Z0-9._-]", with: "-", options: .regularExpression)
+}
+
+private func _shouldTreatAsRecordedSuccess(
+    failureMessage: String?,
+    missingReferencePolicy: MissingReferencePolicy
+) -> Bool {
+    guard let failureMessage else { return false }
+
+    if failureMessage.contains("Record mode is on. Automatically recorded snapshot") {
+        return true
+    }
+
+    switch missingReferencePolicy {
+    case .recordOnMissingReference:
+        return failureMessage.contains("No reference was found on disk. Automatically recorded snapshot")
+    case .fail:
+        return false
+    }
+}
+
+private func _attachmentType(for pathExtension: String) -> SnapshotAttachmentType {
+    switch pathExtension.lowercased() {
+    case "png": return .png
+    case "txt", "text", "md": return .text
+    case "dump": return .dump
+    default: return .binary
+    }
+}
+
+private func _inferredSnapshotFileURL(
+    file: StaticString,
+    testName: String,
+    named: String?,
+    pathExtension: String?
+) -> URL? {
+    let fileURL = URL(fileURLWithPath: file.description, isDirectory: false)
+    let fileName = fileURL.deletingPathExtension().lastPathComponent
+    let snapshotDirectory = fileURL
+        .deletingLastPathComponent()
+        .appendingPathComponent("__Snapshots__")
+        .appendingPathComponent(fileName, isDirectory: true)
+
+    let testNameSanitized = _sanitizePathComponent(testName)
+
+    if let named, !named.isEmpty {
+        var url = snapshotDirectory.appendingPathComponent("\(testNameSanitized).\(_sanitizePathComponent(named))")
+        if let pathExtension {
+            url = url.appendingPathExtension(pathExtension)
+        }
+        return url
+    }
+
+    guard let files = try? FileManager.default.contentsOfDirectory(
+        at: snapshotDirectory,
+        includingPropertiesForKeys: nil
+    ) else {
+        return nil
+    }
+
+    return files.first { $0.lastPathComponent.hasPrefix("\(testNameSanitized).") }
+}
+
+#if canImport(UIKit)
+private func _materializeSnapshot<Value>(
+    value: Value,
+    snapshotting: Snapshotting<Value, UIImage>,
+    timeout: TimeInterval
+) -> UIImage? {
+    let semaphore = DispatchSemaphore(value: 0)
+    var output: UIImage?
+
+    snapshotting.snapshot(value).run { image in
+        output = image
+        semaphore.signal()
+    }
+
+    let result = semaphore.wait(timeout: .now() + timeout)
+    guard result == .success else { return nil }
+    return output
+}
+#endif
+
+private func _writeTextAttachment(contents: String) -> String {
+    let url = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appendingPathComponent("snapshot-text-\(UUID().uuidString).txt")
+    try? contents.data(using: .utf8)?.write(to: url)
+    return url.path
+}
+
+private func _recordFrameworkIssue(_ message: String, file: StaticString, line: UInt) {
+    #if canImport(Testing)
+    if Test.current != nil {
+        Issue.record(
+            Comment(rawValue: message),
+            sourceLocation: SourceLocation(
+                fileID: file.description,
+                filePath: file.description,
+                line: Int(line),
+                column: 1
+            )
+        )
+        return
+    }
+    #endif
+
+    XCTFail(message, file: file, line: line)
 }

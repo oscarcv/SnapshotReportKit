@@ -2,7 +2,7 @@
 
 Swift Package toolchain to build modern static reports for [pointfreeco/swift-snapshot-testing](https://github.com/pointfreeco/swift-snapshot-testing).
 
-Current version: `0.1.0`
+Current version: `0.2.0`
 
 It provides:
 
@@ -14,6 +14,11 @@ It provides:
 - Reporter protocol architecture (`SnapshotReporter`) with one implementation per format.
 - Swift 6 concurrency-ready APIs (`Sendable`, actor-based runtime components).
 - Swift Testing-based package tests.
+- XCTest + Swift Testing-compatible assertion surface.
+- Device/runtime compatibility validation for snapshot presets.
+- Auto-record behavior when reference assets do not exist (configurable).
+- Advanced image diff attachments on failures.
+- Per-run output directory support for test plan/package aggregation (`SNAPSHOT_REPORT_OUTPUT_DIR`, `--input-dir`).
 
 ## Reporter Architecture
 
@@ -63,6 +68,12 @@ swift run snapshot-report \
   --format html \
   --output .artifacts/report \
   --html-template ./my-report.stencil
+
+# Aggregate every JSON run produced by app + local packages (e.g. from test plan)
+swift run snapshot-report \
+  --input-dir .artifacts/snapshot-runs \
+  --format json,junit,html \
+  --output .artifacts/report
 ```
 
 Outputs:
@@ -169,6 +180,8 @@ swift run snapshot-report \
 - Automatic JSON run report generation at test bundle end
 - Multi-appearance snapshot assert (`light` + `dark` by default)
 - Optional high contrast variants (`highContrastLight`, `highContrastDark`)
+- Device preset validation against runtime iOS major version
+- Advanced image diff attachment generation on image mismatches
 
 ### Add To Xcode
 
@@ -177,7 +190,7 @@ swift run snapshot-report \
    - `SnapshotTesting`
    - `SnapshotReportSnapshotTesting`
 3. (Optional) add env vars in your test scheme:
-   - `SNAPSHOT_REPORT_OUTPUT=.artifacts/snapshot-run.json`
+   - `SNAPSHOT_REPORT_OUTPUT_DIR=.artifacts/snapshot-runs`
    - `SNAPSHOT_REPORT_NAME=My App Snapshot Tests`
 
 ### Usage In Tests
@@ -201,19 +214,25 @@ final class LoginSnapshotsTests: XCTestCase {
     // Default: light + dark snapshots from a single assert.
     assertSnapshot(
       of: LoginViewController(),
-      on: .iPhoneSe
+      device: .iPhoneSe
     )
   }
 
   func test_login_screen_all_contrasts() {
     assertSnapshot(
       of: LoginViewController(),
-      on: .iPhoneSe,
+      device: .iPhoneSe,
       appearances: SnapshotAppearanceConfiguration.all
     )
   }
 }
 ```
+
+`assertSnapshot` configuration highlights:
+
+- `device`: validates compatibility against current iOS major version (can override with `osMajorVersion`).
+- `missingReferencePolicy`: defaults to `.recordOnMissingReference` (auto-record if asset is missing).
+- `diffing`: defaults to `CoreImageDifferenceDiffing()` and attaches an advanced diff PNG on failures.
 
 ### Custom Snapshotting Strategies
 

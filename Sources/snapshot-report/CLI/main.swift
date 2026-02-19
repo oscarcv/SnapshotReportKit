@@ -13,7 +13,8 @@ struct CLI {
         let options = try parse(arguments: arguments)
         try FileManager.default.createDirectory(at: options.outputDirectory, withIntermediateDirectories: true)
 
-        let reports = try options.inputs.map(SnapshotReportIO.loadReport)
+        let resolvedInputs = try resolveInputs(options: options)
+        let reports = try resolvedInputs.map(SnapshotReportIO.loadReport)
         let mergedReport = SnapshotReportAggregator.merge(reports: reports, name: options.reportName)
 
         for format in options.formats {
@@ -25,6 +26,7 @@ struct CLI {
 
     private static func parse(arguments: [String]) throws -> Options {
         var inputs: [URL] = []
+        var inputDirectories: [URL] = []
         var formats: [OutputFormat] = [.json, .junit, .html]
         var outputDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("snapshot-report-output", isDirectory: true)
         var htmlTemplate: String?
@@ -54,6 +56,10 @@ struct CLI {
                 index += 1
                 guard index < arguments.count else { throw SnapshotReportError.invalidInput("Missing value for --output") }
                 outputDirectory = URL(fileURLWithPath: arguments[index], isDirectory: true)
+            case "--input-dir":
+                index += 1
+                guard index < arguments.count else { throw SnapshotReportError.invalidInput("Missing value for --input-dir") }
+                inputDirectories.append(URL(fileURLWithPath: arguments[index], isDirectory: true))
             case "--html-template":
                 index += 1
                 guard index < arguments.count else { throw SnapshotReportError.invalidInput("Missing value for --html-template") }
@@ -69,11 +75,44 @@ struct CLI {
             index += 1
         }
 
-        guard !inputs.isEmpty else {
-            throw SnapshotReportError.invalidInput("At least one --input is required")
+        guard !inputs.isEmpty || !inputDirectories.isEmpty else {
+            throw SnapshotReportError.invalidInput("At least one --input or --input-dir is required")
         }
 
-        return Options(inputs: inputs, formats: formats, outputDirectory: outputDirectory, htmlTemplate: htmlTemplate, reportName: reportName)
+        return Options(
+            inputs: inputs,
+            inputDirectories: inputDirectories,
+            formats: formats,
+            outputDirectory: outputDirectory,
+            htmlTemplate: htmlTemplate,
+            reportName: reportName
+        )
+    }
+
+    private static func resolveInputs(options: Options) throws -> [URL] {
+        var resolved = options.inputs
+        let fileManager = FileManager.default
+
+        for directory in options.inputDirectories {
+            guard fileManager.fileExists(atPath: directory.path) else { continue }
+
+            let enumerator = fileManager.enumerator(
+                at: directory,
+                includingPropertiesForKeys: nil
+            )
+
+            while let url = enumerator?.nextObject() as? URL {
+                if url.pathExtension.lowercased() == "json" {
+                    resolved.append(url)
+                }
+            }
+        }
+
+        guard !resolved.isEmpty else {
+            throw SnapshotReportError.invalidInput("No JSON inputs found from --input/--input-dir")
+        }
+
+        return resolved
     }
 
     private static func printUsage() {
@@ -86,6 +125,7 @@ struct CLI {
 
             Options:
               -i, --input <path>          Input report JSON (repeatable)
+                  --input-dir <dir>       Recursively include all JSON reports from a directory
               -f, --format <list>         Comma list: json,junit,html (default: json,junit,html)
               -o, --output <dir>          Output directory (default: ./snapshot-report-output)
                   --html-template <path>  Custom stencil template for html report
@@ -97,6 +137,7 @@ struct CLI {
 
     private struct Options {
         let inputs: [URL]
+        let inputDirectories: [URL]
         let formats: [OutputFormat]
         let outputDirectory: URL
         let htmlTemplate: String?
