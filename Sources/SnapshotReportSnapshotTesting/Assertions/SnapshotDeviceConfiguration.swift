@@ -1,8 +1,11 @@
 import Foundation
 
-#if canImport(UIKit)
-import UIKit
-import SnapshotTesting
+public enum SnapshotCaptureHeight: Sendable, Equatable {
+    case device
+    case large
+    case complete
+    case points(Double)
+}
 
 public enum SnapshotDevicePreset: String, CaseIterable, Sendable {
     case iPhoneSe
@@ -10,7 +13,53 @@ public enum SnapshotDevicePreset: String, CaseIterable, Sendable {
     case iPhone13
     case iPhone13ProMax
 
-    public func viewImageConfig() -> ViewImageConfig {
+    public static let defaultSupportedOSMajorVersions: Set<Int> = [15, 16, 17, 18, 26]
+}
+
+public struct SnapshotDeviceConfiguration: Sendable, Equatable {
+    public var preset: SnapshotDevicePreset
+    public var supportedOSMajorVersions: Set<Int>
+    public var captureHeight: SnapshotCaptureHeight
+
+    public init(
+        preset: SnapshotDevicePreset = .iPhoneSe,
+        supportedOSMajorVersions: Set<Int> = SnapshotDevicePreset.defaultSupportedOSMajorVersions,
+        captureHeight: SnapshotCaptureHeight = .device
+    ) {
+        self.preset = preset
+        self.supportedOSMajorVersions = supportedOSMajorVersions
+        self.captureHeight = captureHeight
+    }
+
+    public func validateCompatibility(osMajorVersion: Int) throws {
+        guard supportedOSMajorVersions.contains(osMajorVersion) else {
+            throw SnapshotDeviceConfigurationError.unsupportedRuntime(
+                device: preset.rawValue,
+                osMajorVersion: osMajorVersion,
+                supportedVersions: supportedOSMajorVersions.sorted()
+            )
+        }
+    }
+}
+
+public enum SnapshotDeviceConfigurationError: Error, CustomStringConvertible, Sendable {
+    case unsupportedRuntime(device: String, osMajorVersion: Int, supportedVersions: [Int])
+
+    public var description: String {
+        switch self {
+        case .unsupportedRuntime(let device, let osMajorVersion, let supportedVersions):
+            let supported = supportedVersions.map(String.init).joined(separator: ", ")
+            return "Incompatible snapshot device/runtime: \(device) on iOS \(osMajorVersion).x is unsupported. Supported versions: \(supported)."
+        }
+    }
+}
+
+#if canImport(UIKit)
+import UIKit
+import SnapshotTesting
+
+public extension SnapshotDevicePreset {
+    func baseViewImageConfig() -> ViewImageConfig {
         switch self {
         case .iPhoneSe:
             return .iPhoneSe(.portrait)
@@ -23,36 +72,35 @@ public enum SnapshotDevicePreset: String, CaseIterable, Sendable {
             return .iPhone13ProMax(.portrait)
         }
     }
+}
 
-    public func validateCompatibility(osMajorVersion: Int) throws {
-        let supportedRange: ClosedRange<Int>
+public extension SnapshotDeviceConfiguration {
+    func viewImageConfig() -> ViewImageConfig {
+        let base = preset.baseViewImageConfig()
 
-        switch self {
-        case .iPhoneSe:
-            supportedRange = 13...18
-        case .iPhone11Pro:
-            supportedRange = 13...17
-        case .iPhone13, .iPhone13ProMax:
-            supportedRange = 15...18
+        guard let size = base.size else {
+            return base
         }
 
-        guard supportedRange.contains(osMajorVersion) else {
-            throw SnapshotDeviceConfigurationError.unsupportedRuntime(
-                device: rawValue,
-                osMajorVersion: osMajorVersion,
-                supportedRange: supportedRange
-            )
-        }
+        return ViewImageConfig(
+            safeArea: base.safeArea,
+            size: CGSize(width: size.width, height: captureHeight.resolved(baseHeight: size.height)),
+            traits: base.traits
+        )
     }
 }
 
-public enum SnapshotDeviceConfigurationError: Error, CustomStringConvertible, Sendable {
-    case unsupportedRuntime(device: String, osMajorVersion: Int, supportedRange: ClosedRange<Int>)
-
-    public var description: String {
+private extension SnapshotCaptureHeight {
+    func resolved(baseHeight: CGFloat) -> CGFloat {
         switch self {
-        case .unsupportedRuntime(let device, let osMajorVersion, let supportedRange):
-            return "Incompatible snapshot device/runtime: \(device) on iOS \(osMajorVersion).x is unsupported. Supported range: iOS \(supportedRange.lowerBound)...\(supportedRange.upperBound)."
+        case .device:
+            return baseHeight
+        case .large:
+            return max(baseHeight * 1.6, 1_500)
+        case .complete:
+            return max(baseHeight * 2.6, 2_500)
+        case .points(let points):
+            return max(CGFloat(points), baseHeight)
         }
     }
 }

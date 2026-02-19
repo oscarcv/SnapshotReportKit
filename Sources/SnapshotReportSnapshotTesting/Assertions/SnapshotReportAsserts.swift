@@ -116,6 +116,8 @@ public func assertReportingSnapshot<Value, Format>(
 public func assertSnapshot(
     of viewController: @autoclosure () throws -> UIViewController,
     device: SnapshotDevicePreset = .iPhoneSe,
+    supportedOSMajorVersions: Set<Int> = SnapshotDevicePreset.defaultSupportedOSMajorVersions,
+    captureHeight: SnapshotCaptureHeight = .device,
     osMajorVersion: Int? = nil,
     appearances: [SnapshotAppearanceConfiguration] = SnapshotAppearanceConfiguration.defaultPair,
     suiteName: String? = nil,
@@ -130,9 +132,14 @@ public func assertSnapshot(
     line: UInt = #line
 ) -> [String] {
     let runtimeMajor = osMajorVersion ?? ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+    let deviceConfiguration = SnapshotDeviceConfiguration(
+        preset: device,
+        supportedOSMajorVersions: supportedOSMajorVersions,
+        captureHeight: captureHeight
+    )
 
     do {
-        try device.validateCompatibility(osMajorVersion: runtimeMajor)
+        try deviceConfiguration.validateCompatibility(osMajorVersion: runtimeMajor)
     } catch {
         let message = "Snapshot device configuration error: \(error)"
         _recordFrameworkIssue(message, file: file, line: line)
@@ -149,7 +156,7 @@ public func assertSnapshot(
     }
 
     var failures: [String] = []
-    let baseConfig = device.viewImageConfig()
+    let baseConfig = deviceConfiguration.viewImageConfig()
 
     for appearance in appearances {
         let snapshotName = [named, appearance.nameSuffix]
@@ -239,6 +246,8 @@ public extension XCTestCase {
     func assertSnapshot(
         of viewController: @autoclosure () throws -> UIViewController,
         device: SnapshotDevicePreset = .iPhoneSe,
+        supportedOSMajorVersions: Set<Int> = SnapshotDevicePreset.defaultSupportedOSMajorVersions,
+        captureHeight: SnapshotCaptureHeight = .device,
         osMajorVersion: Int? = nil,
         appearances: [SnapshotAppearanceConfiguration] = SnapshotAppearanceConfiguration.defaultPair,
         named: String? = nil,
@@ -262,6 +271,8 @@ public extension XCTestCase {
         return SnapshotReportSnapshotTesting.assertSnapshot(
             of: value,
             device: device,
+            supportedOSMajorVersions: supportedOSMajorVersions,
+            captureHeight: captureHeight,
             osMajorVersion: osMajorVersion,
             appearances: appearances,
             suiteName: String(describing: type(of: self)),

@@ -193,7 +193,56 @@ swift run snapshot-report \
    - `SNAPSHOT_REPORT_OUTPUT_DIR=.artifacts/snapshot-runs`
    - `SNAPSHOT_REPORT_NAME=My App Snapshot Tests`
 
-### Usage In Tests
+### Usage In Swift Testing (Parallel By Default)
+
+`Swift Testing` runs tests in parallel by default. This package is parallel-safe for recording because it uses actor-isolated collectors/runtime and supports per-run output directories (`SNAPSHOT_REPORT_OUTPUT_DIR`) for aggregation.
+
+```swift
+import Testing
+import SnapshotTesting
+import SnapshotReportSnapshotTesting
+
+@Suite("Login Snapshots")
+struct LoginSnapshots {
+  private static let reportConfigured: Void = {
+    configureSnapshotReport(
+      reportName: "iOS Snapshot Tests",
+      metadata: ["platform": "iOS", "suite": "Login"]
+    )
+  }()
+
+  @Test("login screen light/dark")
+  func loginDefaultModes() {
+    _ = Self.reportConfigured
+
+    let failures = assertSnapshot(
+      of: LoginViewController(),
+      device: .iPhone13,
+      supportedOSMajorVersions: [15, 16, 17, 18, 26],
+      captureHeight: .large
+    )
+
+    #expect(failures.isEmpty)
+  }
+
+  @Test("login screen all appearance modes")
+  func loginAllModes() {
+    _ = Self.reportConfigured
+
+    let failures = assertSnapshot(
+      of: LoginViewController(),
+      device: .iPhone13,
+      supportedOSMajorVersions: [15, 16, 17, 18, 26],
+      captureHeight: .complete,
+      appearances: SnapshotAppearanceConfiguration.all
+    )
+
+    #expect(failures.isEmpty)
+  }
+}
+```
+
+### Usage In XCTestCase
 
 ```swift
 import XCTest
@@ -231,6 +280,8 @@ final class LoginSnapshotsTests: XCTestCase {
 `assertSnapshot` configuration highlights:
 
 - `device`: validates compatibility against current iOS major version (can override with `osMajorVersion`).
+- `supportedOSMajorVersions`: customize supported runtime versions (default: `15, 16, 17, 18, 26`).
+- `captureHeight`: choose `.device`, `.large`, `.complete`, or `.points(Double)` for taller captures.
 - `missingReferencePolicy`: defaults to `.recordOnMissingReference` (auto-record if asset is missing).
 - `diffing`: defaults to `CoreImageDifferenceDiffing()` and attaches an advanced diff PNG on failures.
 

@@ -90,3 +90,28 @@ func writersUseReporterImplementations() throws {
     #expect(FileManager.default.fileExists(atPath: outputDirectory.appendingPathComponent("report.junit.xml").path))
     #expect(FileManager.default.fileExists(atPath: outputDirectory.appendingPathComponent("html/index.html").path))
 }
+
+@Test
+func collectorSupportsParallelRecording() async {
+    let collector = SnapshotReportCollector(reportName: "Parallel")
+
+    await withTaskGroup(of: Void.self) { group in
+        for idx in 0..<100 {
+            group.addTask {
+                await collector.recordSuccess(
+                    suite: idx.isMultiple(of: 2) ? "SuiteA" : "SuiteB",
+                    test: "test_\(idx)",
+                    className: "ParallelTests",
+                    duration: 0.001
+                )
+            }
+        }
+    }
+
+    let report = await collector.buildReport()
+
+    #expect(report.summary.total == 100)
+    #expect(report.summary.passed == 100)
+    #expect(report.summary.failed == 0)
+    #expect(report.suites.count == 2)
+}

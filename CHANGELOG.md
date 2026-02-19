@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Configurable device compatibility policy via `supportedOSMajorVersions` with defaults `15, 16, 17, 18, 26`.
+- Capture height override support for image snapshots: `.device`, `.large`, `.complete`, `.points(Double)`.
+- Swift Testing example docs and test coverage for parallel-safe collector recording.
+
 ## [0.2.0] - 2026-02-19
 
 ### Added
