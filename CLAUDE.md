@@ -1,0 +1,86 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+**SnapshotReportKit** is a Swift Package that provides a reporting toolchain for [pointfreeco/swift-snapshot-testing](https://github.com/pointfreeco/swift-snapshot-testing). It generates HTML, JUnit XML, and JSON reports from snapshot test runs, and includes a `SnapshotTesting`-aware assertion layer that auto-collects test results.
+
+## Build & Test
+
+```bash
+# Build the package
+swift build
+
+# Run all tests (uses Swift Testing)
+swift test
+
+# Run a single test by name
+swift test --filter mergeAggregatesSuitesAndCounts
+
+# Run the CLI tool
+swift run snapshot-report --input run.json --output ./report --format json,junit,html
+```
+
+## Package Targets
+
+| Target | Role |
+|---|---|
+| `SnapshotReportCore` | Core models, reporters, IO, and aggregation — no UIKit dependency |
+| `SnapshotReportSnapshotTesting` | UIKit/XCTest/Swift Testing assertion layer that wraps `SnapshotTesting` and records to `SnapshotReportCore` |
+| `snapshot-report` | CLI executable that merges JSON run files and generates final reports |
+
+Tests live in `Tests/SnapshotReportCoreTests/` and use **Swift Testing** (`@Test`, `#expect`), not XCTest.
+
+## Architecture
+
+### Data Flow
+
+1. **Assertion layer** (`SnapshotReportSnapshotTesting`) wraps `verifySnapshot` from `swift-snapshot-testing`, records pass/fail/skip into `SnapshotReportRuntime.shared` (an `actor`).
+2. **Runtime** auto-flushes at test bundle end via `SnapshotReportBundleObserver` (`XCTestObservation`), writing a per-run JSON file.
+3. **CLI** ingests one or more run JSON files, merges them with `SnapshotReportAggregator`, and dispatches to reporters.
+4. **Reporters** (`JSONSnapshotReporter`, `JUnitSnapshotReporter`, `HTMLSnapshotReporter`) each conform to `SnapshotReporter` and produce their output format. `SnapshotReportWriters` is the dispatcher.
+
+### Key Types
+
+- `SnapshotReport` / `SnapshotSuite` / `SnapshotTestCase` — the shared Codable model (`SnapshotModels.swift`)
+- `SnapshotReporter` protocol — single method `write(report:options:)`, `Sendable`
+- `SnapshotReportCollector` — `actor` that accumulates test results thread-safely
+- `SnapshotReportRuntime` — `actor` singleton; holds the active collector and configuration; installed via `configureSnapshotReport(...)`
+- `SnapshotAssertionDefaults` — global defaults (device, OS version, capture height, high-contrast) set with `configureSnapshotAssertionDefaults(...)`
+
+### Reporter Output Paths
+
+All reporters write relative to the `outputDirectory` passed in `ReportWriteOptions`:
+- JSON → `report.json`
+- JUnit → `report.junit.xml`
+- HTML → `html/index.html` + `html/attachments/*`
+
+### Appearance Variant Ordering
+
+When `highContrastReport: true`, variants are captured and rendered in this fixed order: `highContrastLight`, `light`, `dark`, `highContrastDark`. This ordering is enforced by `SnapshotAppearanceConfiguration.reportOrder` and tested by `htmlReporterOrdersPassedVariantAttachmentsHorizontally`.
+
+### Environment Variables (Runtime Configuration)
+
+| Variable | Effect |
+|---|---|
+| `SNAPSHOT_REPORT_OUTPUT_DIR` | Directory for per-run JSON files; a unique filename is generated per process |
+| `SNAPSHOT_REPORT_OUTPUT` | Explicit full path for the output JSON |
+| `SNAPSHOT_REPORT_NAME` | Report name embedded in the JSON |
+| `SRCROOT` | Fallback root; output defaults to `$SRCROOT/.artifacts/snapshot-runs/` |
+| `SCHEME_NAME`, `GIT_BRANCH`, `TEST_PLAN_NAME`, `TARGET_NAME` | Auto-populated into report metadata |
+
+### HTML Templates
+
+The default Stencil template is bundled at `Sources/SnapshotReportCore/Resources/default-report.stencil`. Override with `--html-template` on the CLI or `htmlTemplatePath` in `ReportWriteOptions`. Template context keys are documented in `README.md`.
+
+### Device Compatibility
+
+`SnapshotDevicePreset` defines supported devices (`iPhoneSe`, `iPhone11Pro`, `iPhone13`, `iPhone13ProMax`). The `configuredOSMajorVersion` must match the runtime's actual iOS major version and be one of the allowed set (`{15, 16, 17, 18, 26}`); mismatches throw `SnapshotDeviceConfigurationError.unsupportedRuntime`. The default configured version is `26`.
+
+### Adding a New Reporter
+
+1. Create a new file under `Sources/SnapshotReportCore/Reporters/<Format>/`.
+2. Conform to `SnapshotReporter` (`format` + `write(report:options:)`).
+3. Add a case to `OutputFormat` in `ReportWriters.swift` and wire it in `SnapshotReportWriters.reporter(for:)`.
+4. Add the format string to the CLI help text in `main.swift`.
