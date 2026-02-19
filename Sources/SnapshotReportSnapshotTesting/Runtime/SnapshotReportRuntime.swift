@@ -88,7 +88,8 @@ public actor SnapshotReportRuntime {
         className: String,
         duration: TimeInterval,
         failure: String?,
-        attachments: [SnapshotAttachment] = []
+        attachments: [SnapshotAttachment] = [],
+        referenceURL: String? = nil
     ) async {
         hasRecords = true
 
@@ -99,7 +100,8 @@ public actor SnapshotReportRuntime {
                 className: className,
                 duration: duration,
                 message: failure,
-                attachments: attachments
+                attachments: attachments,
+                referenceURL: referenceURL
             )
         } else {
             await collector.recordSuccess(
@@ -107,7 +109,8 @@ public actor SnapshotReportRuntime {
                 test: test,
                 className: className,
                 duration: duration,
-                attachments: attachments
+                attachments: attachments,
+                referenceURL: referenceURL
             )
         }
     }

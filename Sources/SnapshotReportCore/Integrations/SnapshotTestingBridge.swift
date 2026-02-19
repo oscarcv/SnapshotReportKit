@@ -13,7 +13,8 @@ public actor SnapshotReportCollector {
         test: String,
         className: String,
         duration: TimeInterval,
-        attachments: [SnapshotAttachment] = []
+        attachments: [SnapshotAttachment] = [],
+        referenceURL: String? = nil
     ) {
         append(
             suite: suite,
@@ -22,7 +23,8 @@ public actor SnapshotReportCollector {
                 className: className,
                 status: .passed,
                 duration: duration,
-                attachments: attachments
+                attachments: attachments,
+                referenceURL: referenceURL
             )
         )
     }
@@ -36,7 +38,8 @@ public actor SnapshotReportCollector {
         file: String? = nil,
         line: Int? = nil,
         diff: String? = nil,
-        attachments: [SnapshotAttachment] = []
+        attachments: [SnapshotAttachment] = [],
+        referenceURL: String? = nil
     ) {
         append(
             suite: suite,
@@ -46,7 +49,8 @@ public actor SnapshotReportCollector {
                 status: .failed,
                 duration: duration,
                 failure: SnapshotFailure(message: message, file: file, line: line, diff: diff),
-                attachments: attachments
+                attachments: attachments,
+                referenceURL: referenceURL
             )
         )
     }

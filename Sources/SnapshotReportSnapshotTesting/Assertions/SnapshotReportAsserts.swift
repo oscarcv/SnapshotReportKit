@@ -138,6 +138,7 @@ public func assertReportingSnapshot<Value, Format>(
     timeout: TimeInterval = 5,
     missingReferencePolicy: MissingReferencePolicy = .recordOnMissingReference,
     attachSuccessfulSnapshots: Bool = true,
+    referenceURL: String? = nil,
     file: StaticString = #filePath,
     testName: String = #function,
     line: UInt = #line
@@ -155,6 +156,7 @@ public func assertReportingSnapshot<Value, Format>(
         timeout: timeout,
         missingReferencePolicy: missingReferencePolicy,
         attachSuccessfulSnapshots: attachSuccessfulSnapshots,
+        referenceURL: referenceURL,
         file: file,
         testName: testName,
         line: line
@@ -178,6 +180,7 @@ public func assertSnapshot(
     timeout: TimeInterval = 5,
     missingReferencePolicy: MissingReferencePolicy? = nil,
     diffing: any SnapshotImageDiffing = CoreImageDifferenceDiffing(),
+    referenceURL: String? = nil,
     file: StaticString = #filePath,
     testName: String = #function,
     line: UInt = #line
@@ -248,6 +251,7 @@ public func assertSnapshot(
             missingReferencePolicy: resolvedMissingReferencePolicy,
             attachSuccessfulSnapshots: true,
             imageDiffing: diffing,
+            referenceURL: referenceURL,
             file: file,
             testName: testName,
             line: line
@@ -288,6 +292,7 @@ public extension XCTestCase {
         timeout: TimeInterval = 5,
         missingReferencePolicy: MissingReferencePolicy = .recordOnMissingReference,
         attachSuccessfulSnapshots: Bool = true,
+        referenceURL: String? = nil,
         file: StaticString = #filePath,
         testName: String = #function,
         line: UInt = #line
@@ -302,6 +307,7 @@ public extension XCTestCase {
             timeout: timeout,
             missingReferencePolicy: missingReferencePolicy,
             attachSuccessfulSnapshots: attachSuccessfulSnapshots,
+            referenceURL: referenceURL,
             file: file,
             testName: testName,
             line: line
@@ -323,6 +329,7 @@ public extension XCTestCase {
         timeout: TimeInterval = 5,
         missingReferencePolicy: MissingReferencePolicy? = nil,
         diffing: any SnapshotImageDiffing = CoreImageDifferenceDiffing(),
+        referenceURL: String? = nil,
         file: StaticString = #filePath,
         testName: String = #function,
         line: UInt = #line
@@ -351,6 +358,7 @@ public extension XCTestCase {
             timeout: timeout,
             missingReferencePolicy: missingReferencePolicy,
             diffing: diffing,
+            referenceURL: referenceURL,
             file: file,
             testName: testName,
             line: line
@@ -371,6 +379,7 @@ private func _assertReportingSnapshot<Value, Format>(
     missingReferencePolicy: MissingReferencePolicy,
     attachSuccessfulSnapshots: Bool,
     imageDiffing: (any SnapshotImageDiffing)? = nil,
+    referenceURL: String? = nil,
     file: StaticString,
     testName: String,
     line: UInt
@@ -391,7 +400,8 @@ private func _assertReportingSnapshot<Value, Format>(
                 test: normalizedTestName,
                 className: className,
                 duration: Date().timeIntervalSince(start),
-                failure: failureMessage
+                failure: failureMessage,
+                referenceURL: referenceURL
             )
         }
         return failureMessage
@@ -438,24 +448,33 @@ private func _assertReportingSnapshot<Value, Format>(
 
         #if canImport(UIKit)
         if let imageSnapshotting = snapshotting as? Snapshotting<Value, UIImage>,
-           let imageDiffing,
            let normalizedFailure,
-           let reference = UIImage(contentsOfFile: snapshotFileURL.path),
            let actual = _materializeSnapshot(value: evaluated, snapshotting: imageSnapshotting, timeout: timeout),
-           let diffImage = imageDiffing.makeDiff(reference: reference, actual: actual),
-           let diffData = diffImage.pngData() {
-            let diffURL = URL(fileURLWithPath: NSTemporaryDirectory())
-                .appendingPathComponent("snapshot-diff-\(UUID().uuidString).png")
-            try? diffData.write(to: diffURL)
-            attachments.append(
-                SnapshotAttachment(
-                    name: "Advanced Diff",
-                    type: .png,
-                    path: diffURL.path
-                )
-            )
+           let actualData = actual.pngData() {
+            // Always store the actual image so CLI odiff post-processing can use it.
+            let actualURL = URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent("snapshot-actual-\(UUID().uuidString).png")
+            try? actualData.write(to: actualURL)
+            attachments.append(SnapshotAttachment(name: "Actual Snapshot", type: .png, path: actualURL.path))
 
-            // Keep failure text explicit when diff was generated.
+            // CoreImage diff (only when a diffing strategy is provided).
+            if let imageDiffing,
+               let reference = UIImage(contentsOfFile: snapshotFileURL.path),
+               let diffImage = imageDiffing.makeDiff(reference: reference, actual: actual),
+               let diffData = diffImage.pngData() {
+                let diffURL = URL(fileURLWithPath: NSTemporaryDirectory())
+                    .appendingPathComponent("snapshot-diff-\(UUID().uuidString).png")
+                try? diffData.write(to: diffURL)
+                attachments.append(
+                    SnapshotAttachment(
+                        name: "Advanced Diff",
+                        type: .png,
+                        path: diffURL.path
+                    )
+                )
+            }
+
+            // Keep failure text explicit when no diff text is embedded.
             if normalizedFailure.contains("difference") == false {
                 attachments.append(
                     SnapshotAttachment(
@@ -478,7 +497,8 @@ private func _assertReportingSnapshot<Value, Format>(
             className: className,
             duration: duration,
             failure: normalizedFailure,
-            attachments: attachments
+            attachments: attachments,
+            referenceURL: referenceURL
         )
     }
 

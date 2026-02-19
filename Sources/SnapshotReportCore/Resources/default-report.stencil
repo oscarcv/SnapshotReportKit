@@ -225,6 +225,21 @@
 
     .attachment a { color: #7ab8ff; text-decoration: none; }
 
+    .reference-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      margin-top: 0.4rem;
+      padding: 0.25rem 0.65rem;
+      border: 1px solid var(--primary);
+      border-radius: 6px;
+      color: var(--primary);
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-decoration: none;
+    }
+    .reference-btn:hover { background: rgba(19, 127, 236, 0.12); }
+
     @media (max-width: 1080px) {
       .layout { grid-template-columns: 1fr; }
       .sidebar { height: auto; position: static; }
@@ -284,6 +299,9 @@
                   <td>{{ test.className }}</td>
                   <td class="mono">{{ test.duration }}s</td>
                   <td>
+                    {% if test.referenceURL != "" %}
+                      <a class="reference-btn" href="{{ test.referenceURL }}" target="_blank" rel="noopener">&#128279; View Reference</a>
+                    {% endif %}
                     {% if test.status == "failed" %}
                       <div class="failure">{{ test.failure.message }}{% if test.failure.file != "" %}
 

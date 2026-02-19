@@ -56,6 +56,7 @@ public struct SnapshotTestCase: Codable, Sendable {
     public var duration: TimeInterval
     public var failure: SnapshotFailure?
     public var attachments: [SnapshotAttachment]
+    public var referenceURL: String?
 
     public init(
         id: String = UUID().uuidString,
@@ -64,7 +65,8 @@ public struct SnapshotTestCase: Codable, Sendable {
         status: SnapshotStatus,
         duration: TimeInterval,
         failure: SnapshotFailure? = nil,
-        attachments: [SnapshotAttachment] = []
+        attachments: [SnapshotAttachment] = [],
+        referenceURL: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -73,6 +75,7 @@ public struct SnapshotTestCase: Codable, Sendable {
         self.duration = duration
         self.failure = failure
         self.attachments = attachments
+        self.referenceURL = referenceURL
     }
 }
 

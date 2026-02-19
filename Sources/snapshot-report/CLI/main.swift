@@ -5,6 +5,11 @@ struct CLI {
     static func run() throws {
         let arguments = Array(CommandLine.arguments.dropFirst())
 
+        if arguments.first == "inspect" {
+            try InspectCommand.run(arguments: Array(arguments.dropFirst()))
+            return
+        }
+
         if arguments.contains("--help") || arguments.isEmpty {
             printUsage()
             return
@@ -15,10 +20,19 @@ struct CLI {
 
         let resolvedInputs = try resolveInputs(options: options)
         let reports = try resolvedInputs.map(SnapshotReportIO.loadReport)
-        let mergedReport = SnapshotReportAggregator.merge(reports: reports, name: options.reportName)
+        let xcresultReports = try options.xcresultInputs.map { try XCResultReader().read(xcresultPath: $0) }
+        let mergedReport = SnapshotReportAggregator.merge(reports: reports + xcresultReports, name: options.reportName)
+
+        let effectiveOdiffPath = options.odiffPath ?? _resolveOnPATH("odiff")
+        let finalReport: SnapshotReport
+        if let odiffPath = effectiveOdiffPath {
+            finalReport = OdiffProcessor(odiffBinaryPath: odiffPath).process(report: mergedReport)
+        } else {
+            finalReport = mergedReport
+        }
 
         for format in options.formats {
-            try SnapshotReportWriters.write(mergedReport, format: format, options: .init(outputDirectory: options.outputDirectory, htmlTemplatePath: options.htmlTemplate))
+            try SnapshotReportWriters.write(finalReport, format: format, options: .init(outputDirectory: options.outputDirectory, htmlTemplatePath: options.htmlTemplate))
         }
 
         print("Generated report \(options.formats.map(\.rawValue).joined(separator: ", ")) at \(options.outputDirectory.path)")
@@ -27,10 +41,12 @@ struct CLI {
     private static func parse(arguments: [String]) throws -> Options {
         var inputs: [URL] = []
         var inputDirectories: [URL] = []
+        var xcresultInputs: [URL] = []
         var formats: [OutputFormat] = [.json, .junit, .html]
         var outputDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("snapshot-report-output", isDirectory: true)
         var htmlTemplate: String?
         var reportName: String?
+        var odiffPath: String?
 
         var index = 0
         while index < arguments.count {
@@ -68,6 +84,14 @@ struct CLI {
                 index += 1
                 guard index < arguments.count else { throw SnapshotReportError.invalidInput("Missing value for --name") }
                 reportName = arguments[index]
+            case "--xcresult":
+                index += 1
+                guard index < arguments.count else { throw SnapshotReportError.invalidInput("Missing value for --xcresult") }
+                xcresultInputs.append(URL(fileURLWithPath: arguments[index]))
+            case "--odiff":
+                index += 1
+                guard index < arguments.count else { throw SnapshotReportError.invalidInput("Missing value for --odiff") }
+                odiffPath = arguments[index]
             default:
                 throw SnapshotReportError.invalidInput("Unknown argument: \(argument)")
             }
@@ -75,17 +99,19 @@ struct CLI {
             index += 1
         }
 
-        guard !inputs.isEmpty || !inputDirectories.isEmpty else {
-            throw SnapshotReportError.invalidInput("At least one --input or --input-dir is required")
+        guard !inputs.isEmpty || !inputDirectories.isEmpty || !xcresultInputs.isEmpty else {
+            throw SnapshotReportError.invalidInput("At least one --input, --input-dir, or --xcresult is required")
         }
 
         return Options(
             inputs: inputs,
             inputDirectories: inputDirectories,
+            xcresultInputs: xcresultInputs,
             formats: formats,
             outputDirectory: outputDirectory,
             htmlTemplate: htmlTemplate,
-            reportName: reportName
+            reportName: reportName,
+            odiffPath: odiffPath
         )
     }
 
@@ -122,14 +148,17 @@ struct CLI {
 
             Usage:
               snapshot-report --input report1.json --input report2.json [options]
+              snapshot-report inspect --project MyApp.xcodeproj [--gitlab]
 
             Options:
               -i, --input <path>          Input report JSON (repeatable)
                   --input-dir <dir>       Recursively include all JSON reports from a directory
+                  --xcresult <path>       Input xcresult bundle (repeatable, macOS only)
               -f, --format <list>         Comma list: json,junit,html (default: json,junit,html)
               -o, --output <dir>          Output directory (default: ./snapshot-report-output)
                   --html-template <path>  Custom stencil template for html report
                   --name <string>         Override merged report name
+                  --odiff <path>          Path to odiff binary (default: auto-detect on PATH)
                   --help                  Show help
             """
         )
@@ -138,11 +167,28 @@ struct CLI {
     private struct Options {
         let inputs: [URL]
         let inputDirectories: [URL]
+        let xcresultInputs: [URL]
         let formats: [OutputFormat]
         let outputDirectory: URL
         let htmlTemplate: String?
         let reportName: String?
+        let odiffPath: String?
     }
+}
+
+private func _resolveOnPATH(_ name: String) -> String? {
+    let process = Process()
+    let pipe = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+    process.arguments = [name]
+    process.standardOutput = pipe
+    process.standardError = FileHandle.nullDevice
+    guard (try? process.run()) != nil else { return nil }
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else { return nil }
+    let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    return output.flatMap { $0.isEmpty ? nil : $0 }
 }
 
 do {

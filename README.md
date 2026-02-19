@@ -2,7 +2,7 @@
 
 Swift Package toolchain to build modern static reports for [pointfreeco/swift-snapshot-testing](https://github.com/pointfreeco/swift-snapshot-testing).
 
-Current version: `0.2.0`
+Current version: `0.3.0`
 
 It provides:
 
@@ -17,8 +17,12 @@ It provides:
 - XCTest + Swift Testing-compatible assertion surface.
 - Device/runtime compatibility validation for snapshot presets.
 - Auto-record behavior when reference assets do not exist (configurable).
-- Advanced image diff attachments on failures.
+- Advanced image diff attachments on failures (CoreImage).
 - Per-run output directory support for test plan/package aggregation (`SNAPSHOT_REPORT_OUTPUT_DIR`, `--input-dir`).
+- **xcresult input** — ingest `.xcresult` bundles from `xcodebuild test` directly (`--xcresult`).
+- **odiff integration** — SIMD-accelerated pixel diff images via the [`odiff`](https://github.com/dmtrKovalenko/odiff) binary, run automatically after merge (`--odiff`).
+- **Design reference links** — optional `referenceURL` per test case, rendered as a button in the HTML report (Zeplin, Figma, or any URL).
+- **Xcode project inspection** — `inspect` subcommand to detect snapshot targets and generate CI configuration.
 
 ## Reporter Architecture
 
@@ -36,13 +40,6 @@ Protocol:
 
 - `Sources/SnapshotReportCore/Reporting/SnapshotReporter.swift`
 
-## DocC (Common Model)
-
-Common report model documentation is provided in DocC format:
-
-- `Sources/SnapshotReportCore/Documentation.docc/SnapshotReportCore.md`
-- `Sources/SnapshotReportCore/Documentation.docc/CommonModel.md`
-
 ## Install / Build
 
 ```bash
@@ -50,6 +47,8 @@ swift build
 ```
 
 ## CLI Usage
+
+### Basic report generation
 
 ```bash
 swift run snapshot-report \
@@ -60,7 +59,55 @@ swift run snapshot-report \
   --name "iOS Snapshot Regression"
 ```
 
-Optional custom HTML template:
+### Aggregate a whole directory
+
+```bash
+swift run snapshot-report \
+  --input-dir .artifacts/snapshot-runs \
+  --format json,junit,html \
+  --output .artifacts/report
+```
+
+### Ingest an xcresult bundle directly
+
+No custom assertion layer needed — point at the `.xcresult` produced by `xcodebuild test`:
+
+```bash
+swift run snapshot-report \
+  --xcresult DerivedData/MyApp.xcresult \
+  --format json,junit,html \
+  --output .artifacts/report
+```
+
+Mix JSON runs and xcresult bundles freely:
+
+```bash
+swift run snapshot-report \
+  --xcresult DerivedData/MyApp.xcresult \
+  --input .artifacts/extra-run.json \
+  --output .artifacts/report
+```
+
+### odiff pixel diff
+
+[odiff](https://github.com/dmtrKovalenko/odiff) is a SIMD-accelerated image diff tool that produces highlighted difference images. Install it first:
+
+```bash
+brew install dmtrKovalenko/tap/odiff
+```
+
+odiff runs automatically if it is found on PATH. To specify the binary path explicitly:
+
+```bash
+swift run snapshot-report \
+  --input-dir .artifacts/snapshot-runs \
+  --odiff /usr/local/bin/odiff \
+  --output .artifacts/report
+```
+
+For each failed test that has both a reference (`"Snapshot"`) and an actual (`"Actual Snapshot"`) attachment, an `"odiff"` diff image is appended and displayed in the HTML report.
+
+### Custom HTML template
 
 ```bash
 swift run snapshot-report \
@@ -68,12 +115,6 @@ swift run snapshot-report \
   --format html \
   --output .artifacts/report \
   --html-template ./my-report.stencil
-
-# Aggregate every JSON run produced by app + local packages (e.g. from test plan)
-swift run snapshot-report \
-  --input-dir .artifacts/snapshot-runs \
-  --format json,junit,html \
-  --output .artifacts/report
 ```
 
 Outputs:
@@ -83,6 +124,54 @@ Outputs:
 - `.artifacts/report/html/index.html`
 - `.artifacts/report/html/attachments/*`
 
+## Xcode Project Inspection
+
+The `inspect` subcommand scans a `.xcodeproj` to detect snapshot test targets and output recommended configuration.
+
+```bash
+swift run snapshot-report inspect --project MyApp.xcodeproj
+```
+
+With a GitLab CI scheduled-pipeline snippet:
+
+```bash
+swift run snapshot-report inspect --project MyApp.xcodeproj --gitlab
+```
+
+Example output:
+
+```
+=== SnapshotReportKit Inspection: MyApp.xcodeproj ===
+
+Snapshot testing targets detected:
+  • MyAppSnapshotTests
+
+Recommended environment variables to set in each scheme's test action:
+  SNAPSHOT_REPORT_OUTPUT_DIR = $(SRCROOT)/.artifacts/snapshot-runs
+  SRCROOT                    = $(SRCROOT)
+  SCHEME_NAME                = <your scheme name>
+  GIT_BRANCH                 = $(GIT_BRANCH)
+  TEST_PLAN_NAME             = <your test plan name>
+
+Add this call at the start of each snapshot test suite's setUp():
+  configureSnapshotReport(reportName: "<TargetName> Snapshots")
+
+# === Suggested .gitlab-ci.yml snippet for scheduled snapshot runs ===
+
+snapshot-tests:
+  stage: test
+  script:
+    - xcodebuild test -project MyApp.xcodeproj -scheme MyApp ...
+  artifacts:
+    paths:
+      - .artifacts/snapshot-runs/
+      - .artifacts/snapshot-report/
+    reports:
+      junit: .artifacts/snapshot-report/report.junit.xml
+  only:
+    - schedules
+```
+
 ## Input JSON Schema
 
 Each `--input` file is a `SnapshotReport` JSON document.
@@ -90,7 +179,7 @@ Each `--input` file is a `SnapshotReport` JSON document.
 ```json
 {
   "name": "Snapshot Tests",
-  "generatedAt": "2026-02-19T20:00:00Z",
+  "generatedAt": "2026-02-20T10:00:00Z",
   "metadata": {
     "platform": "iOS",
     "device": "iPhone 16"
@@ -105,6 +194,7 @@ Each `--input` file is a `SnapshotReport` JSON document.
           "className": "CheckoutSnapshotsTests",
           "status": "failed",
           "duration": 0.152,
+          "referenceURL": "https://app.zeplin.io/project/abc/screen/123",
           "failure": {
             "message": "Snapshot mismatch",
             "file": "/path/to/CheckoutSnapshotsTests.swift",
@@ -113,14 +203,14 @@ Each `--input` file is a `SnapshotReport` JSON document.
           },
           "attachments": [
             {
-              "name": "Reference",
+              "name": "Snapshot",
               "type": "png",
               "path": "/absolute/path/reference.png"
             },
             {
-              "name": "Diff dump",
-              "type": "dump",
-              "path": "/absolute/path/failure.txt"
+              "name": "Actual Snapshot",
+              "type": "png",
+              "path": "/absolute/path/actual.png"
             }
           ]
         }
@@ -135,6 +225,8 @@ Attachment `type` values:
 - `png`: previewed inline in HTML.
 - `dump` or `text`: rendered as text block in HTML.
 - `binary`: linked for download.
+
+`referenceURL` is optional. When present it renders a "View Reference" link in the HTML report.
 
 ## Integration With SnapshotTesting
 
@@ -155,9 +247,10 @@ await collector.recordFailure(
   line: #line,
   diff: "Pixel mismatch around CTA area",
   attachments: [
-    .init(name: "Reference", type: .png, path: "/tmp/reference.png"),
+    .init(name: "Snapshot", type: .png, path: "/tmp/reference.png"),
     .init(name: "Diff", type: .dump, path: "/tmp/diff.txt")
-  ]
+  ],
+  referenceURL: "https://app.zeplin.io/project/abc/screen/123"
 )
 
 try await collector.writeJSON(to: URL(fileURLWithPath: ".artifacts/run-ios.json"))
@@ -181,7 +274,9 @@ swift run snapshot-report \
 - Multi-appearance snapshot assert (`light` + `dark` by default)
 - Optional high contrast variants (`highContrastLight`, `highContrastDark`)
 - Device preset validation against runtime iOS major version
-- Advanced image diff attachment generation on image mismatches
+- Advanced image diff attachment generation on image mismatches (CoreImage)
+- Actual snapshot attachment for odiff post-processing
+- Optional `referenceURL` per assertion (Zeplin, Figma, or any design link)
 
 ### Add To Xcode
 
@@ -225,7 +320,8 @@ struct LoginSnapshots {
 
     let failures = assertSnapshot(
       of: LoginViewController(),
-      highContrastReport: false
+      highContrastReport: false,
+      referenceURL: "https://app.zeplin.io/project/abc/screen/login"
     )
 
     #expect(failures.isEmpty)
@@ -267,7 +363,8 @@ final class LoginSnapshotsTests: XCTestCase {
     // Default: light + dark snapshots from a single assert.
     assertSnapshot(
       of: LoginViewController(),
-      device: .iPhoneSe
+      device: .iPhoneSe,
+      referenceURL: "https://www.figma.com/file/abc/Login?node-id=1"
     )
   }
 
@@ -289,7 +386,8 @@ final class LoginSnapshotsTests: XCTestCase {
 - `captureHeight`: choose `.device`, `.large`, `.complete`, or `.points(Double)` for taller captures.
 - `highContrastReport: true` forces high-contrast variants and uses order: high contrast light, light, dark, high contrast dark.
 - `missingReferencePolicy`: defaults to `.recordOnMissingReference` (auto-record if asset is missing).
-- `diffing`: defaults to `CoreImageDifferenceDiffing()` and attaches an advanced diff PNG on failures.
+- `diffing`: defaults to `CoreImageDifferenceDiffing()` and attaches an advanced diff PNG on failures. The actual image is also always attached so `odiff` can run at CLI time.
+- `referenceURL`: optional design reference URL (Zeplin, Figma, etc.) rendered as a link in the HTML report.
 
 ### Custom Snapshotting Strategies
 
@@ -298,7 +396,8 @@ You can still use any SnapshotTesting strategy and record it in the report:
 ```swift
 assertReportingSnapshot(
   of: value,
-  as: .json
+  as: .json,
+  referenceURL: "https://app.zeplin.io/project/abc/screen/123"
 )
 ```
 
@@ -307,8 +406,21 @@ assertReportingSnapshot(
 After tests generate one or more run JSON files:
 
 ```bash
+# Basic
 swift run snapshot-report \
   --input .artifacts/snapshot-run.json \
+  --output .artifacts/report \
+  --format json,junit,html
+
+# With odiff (auto-detected on PATH, or specify --odiff /path/to/odiff)
+swift run snapshot-report \
+  --input-dir .artifacts/snapshot-runs \
+  --output .artifacts/report \
+  --format json,junit,html
+
+# From xcresult (no custom assertion layer required)
+swift run snapshot-report \
+  --xcresult DerivedData/MyApp.xcresult \
   --output .artifacts/report \
   --format json,junit,html
 ```
@@ -327,5 +439,58 @@ You can override with `--html-template` and use these context keys:
 - `suites[]`
 - `suite.tests[]`
 - `test.status`, `test.name`, `test.className`, `test.duration`
+- `test.referenceURL` — design reference URL (empty string if not set)
 - `test.failure.message|file|line|diff`
 - `test.attachments[].name|type|path|content`
+
+Attachment names produced automatically by the assertion layer:
+
+| Name | Description |
+|---|---|
+| `Snapshot` | Reference image from `__Snapshots__/` |
+| `Actual Snapshot` | Image captured during the failing test run |
+| `Advanced Diff` | CoreImage difference blend (when `diffing` is provided) |
+| `odiff` | SIMD-accelerated diff from the `odiff` binary (added at CLI time) |
+| `Failure Message` | Plain-text failure message (when no diff text is embedded) |
+
+## Environment Variables (Runtime Configuration)
+
+| Variable | Effect |
+|---|---|
+| `SNAPSHOT_REPORT_OUTPUT_DIR` | Directory for per-run JSON files; a unique filename is generated per process |
+| `SNAPSHOT_REPORT_OUTPUT` | Explicit full path for the output JSON |
+| `SNAPSHOT_REPORT_NAME` | Report name embedded in the JSON |
+| `SRCROOT` | Fallback root; output defaults to `$SRCROOT/.artifacts/snapshot-runs/` |
+| `SCHEME_NAME`, `GIT_BRANCH`, `TEST_PLAN_NAME`, `TARGET_NAME` | Auto-populated into report metadata |
+
+## GitLab CI Example
+
+Use `snapshot-report inspect --gitlab` to generate a tailored snippet, or start from this template:
+
+```yaml
+snapshot-tests:
+  stage: test
+  script:
+    - xcodebuild test
+        -project MyApp.xcodeproj
+        -scheme MyApp
+        -destination 'platform=iOS Simulator,name=iPhone 15,OS=latest'
+        SNAPSHOT_REPORT_OUTPUT_DIR=$CI_PROJECT_DIR/.artifacts/snapshot-runs
+        SRCROOT=$CI_PROJECT_DIR
+        GIT_BRANCH=$CI_COMMIT_REF_NAME
+        SCHEME_NAME=MyApp
+    - swift run snapshot-report
+        --input-dir .artifacts/snapshot-runs
+        --output .artifacts/snapshot-report
+        --format json,junit,html
+  artifacts:
+    paths:
+      - .artifacts/snapshot-runs/
+      - .artifacts/snapshot-report/
+    reports:
+      junit: .artifacts/snapshot-report/report.junit.xml
+  only:
+    - schedules
+```
+
+Schedule this pipeline in GitLab CI → Schedules to run nightly regression checks on your snapshot baselines.

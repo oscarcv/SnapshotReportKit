@@ -74,56 +74,60 @@ struct HTMLRenderer {
 
     private func makeContext(report: SnapshotReport, outputDirectory: URL) -> [String: Any] {
         let formatter = ISO8601DateFormatter()
-        return [
-            "report": [
-                "name": report.name,
-                "generatedAt": formatter.string(from: report.generatedAt),
-                "summary": [
-                    "total": report.summary.total,
-                    "passed": report.summary.passed,
-                    "failed": report.summary.failed,
-                    "skipped": report.summary.skipped,
-                    "duration": String(format: "%.3f", report.summary.duration)
-                ]
-            ],
-            "suites": report.suites.map { suite in
-                [
-                    "name": suite.name,
-                    "tests": suite.tests.map { test in
-                        let orderedAttachments = sortAttachmentsForVariantDisplay(test.attachments)
-                        return [
-                            "id": test.id,
-                            "name": test.name,
-                            "className": test.className,
-                            "status": test.status.rawValue,
-                            "duration": String(format: "%.3f", test.duration),
-                            "failure": [
-                                "message": test.failure?.message ?? "",
-                                "file": test.failure?.file ?? "",
-                                "line": test.failure?.line.map(String.init) ?? "",
-                                "diff": test.failure?.diff ?? ""
-                            ],
-                            "attachments": orderedAttachments.map { attachment in
-                                let fullPath = outputDirectory.appendingPathComponent(attachment.path).path
-                                let textContent: String
-                                if attachment.type == .text || attachment.type == .dump {
-                                    textContent = (try? String(contentsOfFile: fullPath, encoding: .utf8)) ?? ""
-                                } else {
-                                    textContent = ""
-                                }
-
-                                return [
-                                    "name": attachment.name,
-                                    "type": attachment.type.rawValue,
-                                    "path": attachment.path,
-                                    "content": textContent,
-                                    "variantOrder": variantOrder(for: attachment.path)
-                                ]
-                            }
-                        ]
-                    }
-                ]
+        let summaryDict: [String: Any] = [
+            "total": report.summary.total,
+            "passed": report.summary.passed,
+            "failed": report.summary.failed,
+            "skipped": report.summary.skipped,
+            "duration": String(format: "%.3f", report.summary.duration)
+        ]
+        let reportDict: [String: Any] = [
+            "name": report.name,
+            "generatedAt": formatter.string(from: report.generatedAt),
+            "summary": summaryDict
+        ]
+        let suitesArray: [[String: Any]] = report.suites.map { suite in
+            let testsArray: [[String: Any]] = suite.tests.map { test in
+                makeTestContext(test: test, outputDirectory: outputDirectory)
             }
+            return ["name": suite.name, "tests": testsArray]
+        }
+        return ["report": reportDict, "suites": suitesArray]
+    }
+
+    private func makeTestContext(test: SnapshotTestCase, outputDirectory: URL) -> [String: Any] {
+        let orderedAttachments = sortAttachmentsForVariantDisplay(test.attachments)
+        let attachmentsArray: [[String: Any]] = orderedAttachments.map { attachment in
+            let fullPath = outputDirectory.appendingPathComponent(attachment.path).path
+            let textContent: String
+            if attachment.type == .text || attachment.type == .dump {
+                textContent = (try? String(contentsOfFile: fullPath, encoding: .utf8)) ?? ""
+            } else {
+                textContent = ""
+            }
+            return [
+                "name": attachment.name,
+                "type": attachment.type.rawValue,
+                "path": attachment.path,
+                "content": textContent,
+                "variantOrder": variantOrder(for: attachment.path)
+            ]
+        }
+        let failureDict: [String: Any] = [
+            "message": test.failure?.message ?? "",
+            "file": test.failure?.file ?? "",
+            "line": test.failure?.line.map(String.init) ?? "",
+            "diff": test.failure?.diff ?? ""
+        ]
+        return [
+            "id": test.id,
+            "name": test.name,
+            "className": test.className,
+            "status": test.status.rawValue,
+            "duration": String(format: "%.3f", test.duration),
+            "failure": failureDict,
+            "referenceURL": test.referenceURL ?? "",
+            "attachments": attachmentsArray
         ]
     }
 
