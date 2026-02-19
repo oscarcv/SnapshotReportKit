@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ report.name }}</title>
+  <style>
+    :root {
+      --primary: #137fec;
+      --bg: #101922;
+      --surface: #17222d;
+      --surface-soft: #1e2c3d;
+      --border: #2a3b4d;
+      --text: #f1f5f9;
+      --muted: #92adc9;
+      --success: #238636;
+      --danger: #da3633;
+      --warning: #d29922;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Inter", "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    .layout {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 300px 1fr;
+    }
+
+    .sidebar {
+      border-right: 1px solid var(--border);
+      background: #0e171f;
+      padding: 1rem;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow: auto;
+    }
+
+    .title { font-size: 1.05rem; font-weight: 700; margin: 0 0 0.25rem; }
+    .muted { color: var(--muted); }
+
+    .suite-link {
+      display: block;
+      text-decoration: none;
+      color: #d3deea;
+      padding: 0.55rem 0.65rem;
+      border: 1px solid transparent;
+      border-radius: 10px;
+      margin-bottom: 0.4rem;
+      background: transparent;
+    }
+
+    .suite-link:hover { background: var(--surface); border-color: var(--border); }
+
+    .count {
+      float: right;
+      background: #223344;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 0.05rem 0.45rem;
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+
+    .content { padding: 1.5rem; }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .topbar h1 { margin: 0; font-size: 1.6rem; }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(120px, 1fr));
+      gap: 0.8rem;
+      margin-bottom: 1rem;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 0.85rem;
+    }
+
+    .card .label {
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-size: 0.68rem;
+      color: var(--muted);
+      margin-bottom: 0.2rem;
+    }
+
+    .card strong { font-size: 1.35rem; }
+
+    .suite {
+      margin-top: 1rem;
+      margin-bottom: 1.5rem;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      background: var(--surface);
+    }
+
+    .suite-header {
+      padding: 0.8rem 1rem;
+      background: var(--surface-soft);
+      border-bottom: 1px solid var(--border);
+      font-weight: 700;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+
+    th, td {
+      padding: 0.65rem 0.7rem;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      font-size: 0.72rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      background: #111b24;
+    }
+
+    .badge {
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-weight: 700;
+      border: 1px solid transparent;
+      display: inline-block;
+    }
+
+    .passed { color: #57d68d; background: rgba(35, 134, 54, 0.15); border-color: rgba(35, 134, 54, 0.35); }
+    .failed { color: #ff8d8a; background: rgba(218, 54, 51, 0.18); border-color: rgba(218, 54, 51, 0.35); }
+    .skipped { color: #ffd884; background: rgba(210, 153, 34, 0.18); border-color: rgba(210, 153, 34, 0.35); }
+
+    .mono { font-family: "JetBrains Mono", "SFMono-Regular", monospace; font-size: 0.82rem; color: #cdd9e5; }
+
+    .failure {
+      margin-top: 0.45rem;
+      background: rgba(218, 54, 51, 0.14);
+      border: 1px solid rgba(218, 54, 51, 0.25);
+      border-radius: 8px;
+      padding: 0.5rem;
+      color: #ffd4d2;
+      white-space: pre-wrap;
+      font-family: "JetBrains Mono", "SFMono-Regular", monospace;
+      font-size: 0.8rem;
+    }
+
+    .attachments {
+      margin-top: 0.5rem;
+      display: grid;
+      gap: 0.5rem;
+    }
+
+    .attachment {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #111b24;
+      padding: 0.5rem;
+    }
+
+    .attachment .name {
+      color: var(--muted);
+      text-transform: uppercase;
+      font-size: 0.68rem;
+      letter-spacing: 0.06em;
+      margin-bottom: 0.35rem;
+    }
+
+    .attachment img {
+      max-width: 280px;
+      width: 100%;
+      border-radius: 7px;
+      border: 1px solid var(--border);
+      display: block;
+    }
+
+    .attachment pre {
+      margin: 0;
+      white-space: pre-wrap;
+      max-height: 180px;
+      overflow: auto;
+      font-family: "JetBrains Mono", "SFMono-Regular", monospace;
+      font-size: 0.76rem;
+      color: #d3deea;
+    }
+
+    .attachment a { color: #7ab8ff; text-decoration: none; }
+
+    @media (max-width: 1080px) {
+      .layout { grid-template-columns: 1fr; }
+      .sidebar { height: auto; position: static; }
+      .summary { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <h2 class="title">Test Explorer</h2>
+      <div class="muted" style="font-size: 0.8rem; margin-bottom: 0.9rem;">Generated: {{ report.generatedAt }}</div>
+      {% for suite in suites %}
+        <a class="suite-link" href="#suite-{{ forloop.counter }}">
+          {{ suite.name }}
+          <span class="count">{{ suite.tests.count }}</span>
+        </a>
+      {% endfor %}
+    </aside>
+
+    <main class="content">
+      <section class="topbar">
+        <div>
+          <h1>{{ report.name }}</h1>
+          <div class="muted">Modern Snapshot Dashboard</div>
+        </div>
+      </section>
+
+      <section class="summary">
+        <div class="card"><div class="label">Total Tests</div><strong>{{ report.summary.total }}</strong></div>
+        <div class="card"><div class="label">Passed</div><strong style="color:#57d68d;">{{ report.summary.passed }}</strong></div>
+        <div class="card"><div class="label">Failed</div><strong style="color:#ff8d8a;">{{ report.summary.failed }}</strong></div>
+        <div class="card"><div class="label">Skipped</div><strong style="color:#ffd884;">{{ report.summary.skipped }}</strong></div>
+        <div class="card"><div class="label">Duration</div><strong>{{ report.summary.duration }}s</strong></div>
+      </section>
+
+      {% for suite in suites %}
+        <section id="suite-{{ forloop.counter }}" class="suite">
+          <div class="suite-header">{{ suite.name }}</div>
+          <table>
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Test Name</th>
+                <th>Class</th>
+                <th>Duration</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for test in suite.tests %}
+                <tr>
+                  <td>
+                    <span class="badge {{ test.status }}">{{ test.status }}</span>
+                  </td>
+                  <td class="mono">{{ test.name }}</td>
+                  <td>{{ test.className }}</td>
+                  <td class="mono">{{ test.duration }}s</td>
+                  <td>
+                    {% if test.status == "failed" %}
+                      <div class="failure">{{ test.failure.message }}{% if test.failure.file != "" %}
+
+File: {{ test.failure.file }}{% if test.failure.line != "" %}:{{ test.failure.line }}{% endif %}{% endif %}{% if test.failure.diff != "" %}
+
+{{ test.failure.diff }}{% endif %}</div>
+                    {% endif %}
+
+                    {% if test.attachments.count > 0 %}
+                      <div class="attachments">
+                        {% for attachment in test.attachments %}
+                          <div class="attachment">
+                            <div class="name">{{ attachment.name }} ({{ attachment.type }})</div>
+                            {% if attachment.type == "png" %}
+                              <img src="{{ attachment.path }}" alt="{{ attachment.name }}" />
+                            {% elif attachment.type == "dump" or attachment.type == "text" %}
+                              <pre>{% if attachment.content != "" %}{{ attachment.content }}{% else %}Attachment file path: {{ attachment.path }}{% endif %}</pre>
+                            {% else %}
+                              <a href="{{ attachment.path }}">Download attachment</a>
+                            {% endif %}
+                          </div>
+                        {% endfor %}
+                      </div>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </section>
+      {% endfor %}
+    </main>
+  </div>
+</body>
+</html>
