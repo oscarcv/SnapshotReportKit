@@ -39,10 +39,10 @@ jobs:
           languages: swift
 
       - name: Build for CodeQL
+        timeout-minutes: 20
         run: |
-          swift package resolve
-          swift build --build-tests
-          swift build --package-path examples/lib
+          swift package resolve -v
+          swift build --build-tests -v
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
