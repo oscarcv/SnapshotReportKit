@@ -2,7 +2,7 @@
 
 Swift Package toolchain to build modern static reports for [pointfreeco/swift-snapshot-testing](https://github.com/pointfreeco/swift-snapshot-testing).
 
-Current version: `0.4.0`
+Current version: `0.5.0`
 
 It provides:
 
@@ -48,6 +48,15 @@ Protocol:
 swift build
 ```
 
+## Install via Homebrew
+
+```bash
+brew tap oscarcv/tap
+brew install snapshot-report
+```
+
+This installs the `snapshot-report` CLI from prebuilt release artifacts (`arm64` and `x86_64`).
+
 ## Project Automation
 
 GitHub Actions workflows included in this repository:
@@ -63,6 +72,13 @@ Repository best-practice files included:
 - `.github/pull_request_template.md`
 - `.github/ISSUE_TEMPLATE/*`
 - `.github/dependabot.yml`
+
+Release automation included:
+
+- `.github/workflows/release.yml`
+  - Builds `snapshot-report` for macOS `arm64` and `x86_64` on tag push (`v*`)
+  - Uploads artifacts to GitHub Releases
+  - Updates `oscarcv/tap` formula automatically
 
 ## Examples
 
