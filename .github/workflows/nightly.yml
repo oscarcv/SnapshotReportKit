@@ -1,0 +1,191 @@
+name: Nightly
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly-release
+  cancel-in-progress: true
+
+jobs:
+  build-macos:
+    name: Build nightly macOS (${{ matrix.arch }})
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x86_64]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "latest-stable"
+
+      - name: Build binary
+        run: |
+          swift --version
+          swift build -c release --product snapshot-report --arch "${{ matrix.arch }}"
+
+      - name: Package artifact
+        run: |
+          set -euo pipefail
+          ARCH="${{ matrix.arch }}"
+          ROOT="snapshot-report-nightly-macos-${ARCH}"
+          mkdir -p "dist/${ROOT}"
+
+          BIN=".build/${ARCH}-apple-macosx/release/snapshot-report"
+          cp "${BIN}" "dist/${ROOT}/snapshot-report"
+          chmod +x "dist/${ROOT}/snapshot-report"
+
+          tar -C dist -czf "dist/${ROOT}.tar.gz" "${ROOT}"
+          shasum -a 256 "dist/${ROOT}.tar.gz" | awk '{print $1}' > "dist/${ROOT}.sha256"
+
+      - name: Upload nightly artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-${{ matrix.arch }}
+          path: dist/*
+
+  publish-nightly:
+    name: Publish Nightly Release
+    runs-on: ubuntu-latest
+    needs: [build-macos]
+
+    steps:
+      - name: Download arm64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: nightly-arm64
+          path: dist
+
+      - name: Download x86_64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: nightly-x86_64
+          path: dist
+
+      - name: Compute nightly version
+        run: |
+          set -euo pipefail
+          NIGHTLY_VERSION="$(date -u +'%Y.%m.%d').${GITHUB_RUN_NUMBER}"
+          echo "NIGHTLY_VERSION=${NIGHTLY_VERSION}" >> "${GITHUB_ENV}"
+
+      - name: Publish nightly assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: Nightly
+          prerelease: true
+          make_latest: false
+          generate_release_notes: false
+          body: |
+            Nightly build for commit `${{ github.sha }}`.
+            Version: `${{ env.NIGHTLY_VERSION }}`
+          files: |
+            dist/*.tar.gz
+            dist/*.sha256
+          overwrite_files: true
+
+  update-homebrew-tap-nightly:
+    name: Update Homebrew Tap (nightly)
+    runs-on: ubuntu-latest
+    needs: [publish-nightly]
+
+    steps:
+      - name: Checkout current repo
+        uses: actions/checkout@v4
+
+      - name: Download arm64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: nightly-arm64
+          path: dist
+
+      - name: Download x86_64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: nightly-x86_64
+          path: dist
+
+      - name: Checkout tap repo
+        uses: actions/checkout@v4
+        with:
+          repository: oscarcv/tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN != '' && secrets.HOMEBREW_TAP_TOKEN || github.token }}
+          path: tap
+
+      - name: Generate nightly formula
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          NIGHTLY_VERSION="$(date -u +'%Y.%m.%d').${GITHUB_RUN_NUMBER}"
+          ARM_TAR="snapshot-report-nightly-macos-arm64.tar.gz"
+          X86_TAR="snapshot-report-nightly-macos-x86_64.tar.gz"
+
+          ARM_SHA="$(cat "dist/snapshot-report-nightly-macos-arm64.sha256")"
+          X86_SHA="$(cat "dist/snapshot-report-nightly-macos-x86_64.sha256")"
+
+          ARM_URL="https://github.com/${REPOSITORY}/releases/download/nightly/${ARM_TAR}"
+          X86_URL="https://github.com/${REPOSITORY}/releases/download/nightly/${X86_TAR}"
+
+          mkdir -p tap/Formula
+          cat > tap/Formula/snapshot-report-nightly.rb <<EOF
+          class SnapshotReportNightly < Formula
+            desc "Nightly snapshot report generator for Swift SnapshotTesting"
+            homepage "https://github.com/${REPOSITORY}"
+            version "${NIGHTLY_VERSION}"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "${ARM_URL}"
+                sha256 "${ARM_SHA}"
+              else
+                url "${X86_URL}"
+                sha256 "${X86_SHA}"
+              end
+            end
+
+            def install
+              bin.install "snapshot-report" => "snapshot-report-nightly"
+            end
+
+            test do
+              assert_match "snapshot-report", shell_output("#{bin}/snapshot-report-nightly --help")
+            end
+          end
+          EOF
+
+      - name: Commit and push nightly formula update
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${HOMEBREW_TAP_TOKEN}" ]; then
+            echo "HOMEBREW_TAP_TOKEN is required to push to oscarcv/tap."
+            echo "Set it in Settings > Secrets and variables > Actions > New repository secret."
+            exit 1
+          fi
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/oscarcv/tap.git"
+          git add Formula/snapshot-report-nightly.rb
+          if git diff --staged --quiet; then
+            echo "No nightly tap changes to commit."
+            exit 0
+          fi
+          git commit -m "snapshot-report nightly ${GITHUB_SHA::7}"
+          git push
