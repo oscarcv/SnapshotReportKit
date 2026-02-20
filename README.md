@@ -25,6 +25,9 @@ It provides:
 - **odiff integration** — SIMD-accelerated pixel diff images via the [`odiff`](https://github.com/dmtrKovalenko/odiff) binary, run automatically after merge (`--odiff`).
 - **Design reference links** — optional `referenceURL` per test case, rendered as a button in the HTML report (Zeplin, Figma, or any URL).
 - **Xcode project inspection** — `inspect` subcommand to detect snapshot targets and generate CI configuration.
+- **CLI progress UI** — Noora-inspired processing steps and progress messages for load/extract/merge/write.
+- **Parallel processing** — JSON ingestion, xcresult extraction, attachment copy, and report writers run in parallel (`--jobs`).
+- **APFS-safe attachment naming** — oversized attachment filenames are shortened with a hash suffix and warning output.
 
 ## Reporter Architecture
 

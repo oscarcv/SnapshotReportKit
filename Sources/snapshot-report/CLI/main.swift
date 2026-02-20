@@ -5,6 +5,7 @@ import SnapshotReportCLI
 
 struct CLI {
     static func run() throws {
+        CLIUI.header("snapshot-report")
         let arguments = Array(CommandLine.arguments.dropFirst())
 
         if arguments.first == "inspect" {
@@ -20,24 +21,43 @@ struct CLI {
         let options = try parse(arguments: arguments)
         try FileManager.default.createDirectory(at: options.outputDirectory, withIntermediateDirectories: true)
 
+        CLIUI.step("Resolving input files")
         let resolvedInputs = try resolveInputs(options: options)
-        let reports = try resolvedInputs.map(SnapshotReportIO.loadReport)
-        let xcresultReports = try _readXCResultReports(inputs: options.xcresultInputs, jobs: options.jobs)
+
+        CLIUI.step("Loading JSON reports (\(resolvedInputs.count))")
+        let reports = try _loadJSONReports(inputs: resolvedInputs, jobs: options.jobs) { completed, total, input in
+            CLIUI.progress("JSON \(completed)/\(total): \(input.lastPathComponent)")
+        }
+
+        CLIUI.step("Extracting xcresult bundles (\(options.xcresultInputs.count))")
+        let xcresultReports = try _readXCResultReports(inputs: options.xcresultInputs, jobs: options.jobs) { completed, total, input in
+            CLIUI.progress("XCResult \(completed)/\(total): \(input.lastPathComponent)")
+        }
+
+        CLIUI.step("Merging report data")
         let mergedReport = SnapshotReportAggregator.merge(reports: reports + xcresultReports, name: options.reportName)
 
         let effectiveOdiffPath = options.odiffPath ?? _resolveOnPATH("odiff")
         let finalReport: SnapshotReport
         if let odiffPath = effectiveOdiffPath {
+            CLIUI.step("Generating odiff attachments")
             finalReport = OdiffProcessor(odiffBinaryPath: odiffPath).process(report: mergedReport)
         } else {
             finalReport = mergedReport
         }
 
-        for format in options.formats {
-            try SnapshotReportWriters.write(finalReport, format: format, options: .init(outputDirectory: options.outputDirectory, htmlTemplatePath: options.htmlTemplate))
+        CLIUI.step("Generating output formats (\(options.formats.count))")
+        try _writeReports(
+            finalReport,
+            formats: options.formats,
+            outputDirectory: options.outputDirectory,
+            htmlTemplate: options.htmlTemplate,
+            jobs: options.jobs
+        ) { completed, total, format in
+            CLIUI.progress("Output \(completed)/\(total): \(format.rawValue)")
         }
 
-        print("Generated report \(options.formats.map(\.rawValue).joined(separator: ", ")) at \(options.outputDirectory.path)")
+        CLIUI.success("Generated report \(options.formats.map(\.rawValue).joined(separator: ", ")) at \(options.outputDirectory.path)")
     }
 
     private static func parse(arguments: [String]) throws -> Options {
@@ -189,9 +209,17 @@ struct CLI {
     }
 }
 
-private func _readXCResultReports(inputs: [URL], jobs: Int) throws -> [SnapshotReport] {
+private func _readXCResultReports(
+    inputs: [URL],
+    jobs: Int,
+    progress: @escaping @Sendable (_ completed: Int, _ total: Int, _ input: URL) -> Void = { _, _, _ in }
+) throws -> [SnapshotReport] {
     guard !inputs.isEmpty else { return [] }
-    if inputs.count == 1 { return [try XCResultReader().read(xcresultPath: inputs[0])] }
+    if inputs.count == 1 {
+        let report = try XCResultReader().read(xcresultPath: inputs[0])
+        progress(1, 1, inputs[0])
+        return [report]
+    }
 
     let workerCount = max(1, min(jobs, inputs.count))
     let queue = DispatchQueue(label: "snapshot-report.xcresult.queue", attributes: .concurrent)
@@ -211,6 +239,8 @@ private func _readXCResultReports(inputs: [URL], jobs: Int) throws -> [SnapshotR
             do {
                 let report = try XCResultReader().read(xcresultPath: input)
                 state.setReport(report, at: index)
+                let completed = state.incrementCompleted()
+                progress(completed, inputs.count, input)
             } catch {
                 state.setFirstErrorIfNeeded(error)
             }
@@ -227,6 +257,7 @@ private final class XCResultReadState: @unchecked Sendable {
     private let lock = NSLock()
     private var reportsByIndex: [Int: SnapshotReport] = [:]
     private var storedError: Error?
+    private var completedCount = 0
 
     func setReport(_ report: SnapshotReport, at index: Int) {
         lock.lock()
@@ -248,10 +279,169 @@ private final class XCResultReadState: @unchecked Sendable {
         lock.unlock()
     }
 
+    func incrementCompleted() -> Int {
+        lock.lock()
+        completedCount += 1
+        let value = completedCount
+        lock.unlock()
+        return value
+    }
+
     func firstError() -> Error? {
         lock.lock()
         defer { lock.unlock() }
         return storedError
+    }
+}
+
+private func _loadJSONReports(
+    inputs: [URL],
+    jobs: Int,
+    progress: @escaping @Sendable (_ completed: Int, _ total: Int, _ input: URL) -> Void = { _, _, _ in }
+) throws -> [SnapshotReport] {
+    guard !inputs.isEmpty else { return [] }
+    if inputs.count == 1 {
+        let report = try SnapshotReportIO.loadReport(from: inputs[0])
+        progress(1, 1, inputs[0])
+        return [report]
+    }
+
+    let workerCount = max(1, min(jobs, inputs.count))
+    let queue = DispatchQueue(label: "snapshot-report.json.queue", attributes: .concurrent)
+    let semaphore = DispatchSemaphore(value: workerCount)
+    let state = XCResultReadState()
+    let group = DispatchGroup()
+
+    for (index, input) in inputs.enumerated() {
+        group.enter()
+        semaphore.wait()
+        queue.async {
+            defer {
+                semaphore.signal()
+                group.leave()
+            }
+
+            do {
+                let report = try SnapshotReportIO.loadReport(from: input)
+                state.setReport(report, at: index)
+                let completed = state.incrementCompleted()
+                progress(completed, inputs.count, input)
+            } catch {
+                state.setFirstErrorIfNeeded(error)
+            }
+        }
+    }
+
+    group.wait()
+    if let firstError = state.firstError() { throw firstError }
+    return inputs.indices.compactMap { state.report(at: $0) }
+}
+
+private func _writeReports(
+    _ report: SnapshotReport,
+    formats: [OutputFormat],
+    outputDirectory: URL,
+    htmlTemplate: String?,
+    jobs: Int,
+    progress: @escaping @Sendable (_ completed: Int, _ total: Int, _ format: OutputFormat) -> Void = { _, _, _ in }
+) throws {
+    if formats.count == 1 {
+        let format = formats[0]
+        try SnapshotReportWriters.write(
+            report,
+            format: format,
+            options: .init(outputDirectory: outputDirectory, htmlTemplatePath: htmlTemplate)
+        )
+        progress(1, 1, format)
+        return
+    }
+
+    let workerCount = max(1, min(jobs, formats.count))
+    let queue = DispatchQueue(label: "snapshot-report.write.queue", attributes: .concurrent)
+    let semaphore = DispatchSemaphore(value: workerCount)
+    let state = ReportWriteState()
+    let group = DispatchGroup()
+
+    for format in formats {
+        group.enter()
+        semaphore.wait()
+        queue.async {
+            defer {
+                semaphore.signal()
+                group.leave()
+            }
+            do {
+                try SnapshotReportWriters.write(
+                    report,
+                    format: format,
+                    options: .init(outputDirectory: outputDirectory, htmlTemplatePath: htmlTemplate)
+                )
+                let completed = state.incrementCompleted()
+                progress(completed, formats.count, format)
+            } catch {
+                state.setFirstErrorIfNeeded(error)
+            }
+        }
+    }
+
+    group.wait()
+    if let firstError = state.firstError() {
+        throw firstError
+    }
+}
+
+private final class ReportWriteState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedError: Error?
+    private var completedCount = 0
+
+    func incrementCompleted() -> Int {
+        lock.lock()
+        completedCount += 1
+        let value = completedCount
+        lock.unlock()
+        return value
+    }
+
+    func setFirstErrorIfNeeded(_ error: Error) {
+        lock.lock()
+        if storedError == nil {
+            storedError = error
+        }
+        lock.unlock()
+    }
+
+    func firstError() -> Error? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedError
+    }
+}
+
+private enum CLIUI {
+    private static let lock = NSLock()
+    private static let prefix = "[snapshot-report]"
+
+    static func header(_ title: String) {
+        log("\(prefix) \(title)")
+    }
+
+    static func step(_ message: String) {
+        log("\(prefix) step: \(message)")
+    }
+
+    static func progress(_ message: String) {
+        log("\(prefix) progress: \(message)")
+    }
+
+    static func success(_ message: String) {
+        log("\(prefix) success: \(message)")
+    }
+
+    static func log(_ message: String) {
+        lock.lock()
+        print(message)
+        lock.unlock()
     }
 }
 

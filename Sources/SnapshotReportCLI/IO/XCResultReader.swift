@@ -272,43 +272,92 @@ public struct XCResultReader: Sendable {
         let label: String
     }
 
+    private struct PreparedAttachment: Sendable {
+        let index: Int
+        let uniformTypeID: String
+        let payloadID: String
+        let baseFilename: String
+        let rawName: String
+    }
+
+    private final class ExportAttachmentState: @unchecked Sendable {
+        private let lock = NSLock()
+        private var payloadByIndex: [Int: ExportedAttachmentPayload] = [:]
+
+        func set(_ payload: ExportedAttachmentPayload, at index: Int) {
+            lock.lock()
+            payloadByIndex[index] = payload
+            lock.unlock()
+        }
+
+        func orderedPayloads(totalCount: Int) -> [ExportedAttachmentPayload] {
+            lock.lock()
+            defer { lock.unlock() }
+            return (0..<totalCount).compactMap { payloadByIndex[$0] }
+        }
+    }
+
     private func exportAttachments(in activitySummaries: [[String: Any]], xcresultPath: URL) -> [ExportedAttachmentPayload] {
-        var exported: [ExportedAttachmentPayload] = []
-
+        var rawAttachments: [[String: Any]] = []
         for activity in activitySummaries {
-            let activityAttachments = arrayValues(from: activity, key: "attachments")
-            guard !activityAttachments.isEmpty else { continue }
-            for att in activityAttachments {
-                guard
-                    let uniformTypeID = value(from: att, key: "uniformTypeIdentifier"),
-                    let payloadRef = att["payloadRef"] as? [String: Any],
-                    let payloadID = value(from: payloadRef, key: "id")
-                else { continue }
+            rawAttachments.append(contentsOf: arrayValues(from: activity, key: "attachments"))
+        }
+        guard !rawAttachments.isEmpty else { return [] }
 
-                let baseFilename = value(from: att, key: "filename") ?? "\(payloadID).png"
+        let prepared: [PreparedAttachment] = rawAttachments.enumerated().compactMap { index, att in
+            guard
+                let uniformTypeID = value(from: att, key: "uniformTypeIdentifier"),
+                let payloadRef = att["payloadRef"] as? [String: Any],
+                let payloadID = value(from: payloadRef, key: "id")
+            else { return nil }
+            let baseFilename = value(from: att, key: "filename") ?? "\(payloadID).png"
+            let rawName = value(from: att, key: "name") ?? "Attachment"
+            return PreparedAttachment(
+                index: index,
+                uniformTypeID: uniformTypeID,
+                payloadID: payloadID,
+                baseFilename: baseFilename,
+                rawName: rawName
+            )
+        }
+        guard !prepared.isEmpty else { return [] }
+
+        let workerCount = max(1, min(ProcessInfo.processInfo.activeProcessorCount, prepared.count))
+        let queue = DispatchQueue(label: "snapshot-report.xcresult.attachments", attributes: .concurrent)
+        let semaphore = DispatchSemaphore(value: workerCount)
+        let group = DispatchGroup()
+        let state = ExportAttachmentState()
+
+        for att in prepared {
+            group.enter()
+            semaphore.wait()
+            queue.async {
+                defer {
+                    semaphore.signal()
+                    group.leave()
+                }
                 let destURL = URL(fileURLWithPath: NSTemporaryDirectory())
-                    .appendingPathComponent("xcresult-\(UUID().uuidString)-\(baseFilename)")
+                    .appendingPathComponent("xcresult-\(UUID().uuidString)-\(att.baseFilename)")
 
                 do {
                     try xcrun(args: [
                         "xcresulttool", "export", "object", "--legacy",
                         "--type", "file",
-                        "--id", payloadID,
+                        "--id", att.payloadID,
                         "--output-path", destURL.path,
                         "--path", xcresultPath.path
                     ])
-                    let rawName = value(from: att, key: "name") ?? "Attachment"
-                    let standardized = parseStandardizedAttachmentName(rawName)
+                    let standardized = parseStandardizedAttachmentName(att.rawName)
 
-                    if uniformTypeID == "public.json",
+                    if att.uniformTypeID == "public.json",
                        standardized?.kind == "manifest",
                        let data = try? Data(contentsOf: destURL),
                        let manifest = try? JSONDecoder().decode(SnapshotAssertionManifestRecord.self, from: data) {
-                        exported.append(.init(attachment: nil, manifest: manifest))
-                        continue
+                        state.set(.init(attachment: nil, manifest: manifest), at: att.index)
+                        return
                     }
 
-                    guard uniformTypeID == "public.png" else { continue }
+                    guard att.uniformTypeID == "public.png" else { return }
                     let mappedName: String
                     if let standardized {
                         switch standardized.kind {
@@ -319,10 +368,10 @@ public struct XCResultReader: Sendable {
                         case "diff":
                             mappedName = standardized.label.isEmpty ? "Diff" : "Diff-\(standardized.label)"
                         default:
-                            mappedName = rawName
+                            mappedName = att.rawName
                         }
                     } else {
-                        switch rawName.lowercased() {
+                        switch att.rawName.lowercased() {
                         case "reference":
                             mappedName = "Snapshot"
                         case "failure":
@@ -330,19 +379,21 @@ public struct XCResultReader: Sendable {
                         case "difference":
                             mappedName = "Diff"
                         default:
-                            mappedName = rawName
+                            mappedName = att.rawName
                         }
                     }
-                    exported.append(.init(
+                    state.set(.init(
                         attachment: SnapshotAttachment(name: mappedName, type: .png, path: destURL.path),
                         manifest: nil
-                    ))
+                    ), at: att.index)
                 } catch {
-                    continue
+                    return
                 }
             }
         }
-        return exported
+
+        group.wait()
+        return state.orderedPayloads(totalCount: rawAttachments.count)
     }
 
     private func parseStandardizedAttachmentName(_ raw: String) -> StandardizedAttachmentName? {

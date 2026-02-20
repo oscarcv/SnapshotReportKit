@@ -14,6 +14,7 @@ public struct HTMLSnapshotReporter: SnapshotReporter {
 
 struct HTMLRenderer {
     private let fileManager = FileManager.default
+    private let maxFilenameBytes = 240
 
     func render(report: SnapshotReport, outputDirectory: URL, customTemplatePath: String?) throws {
         try fileManager.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
@@ -31,27 +32,62 @@ struct HTMLRenderer {
 
     private func copyAttachments(for report: SnapshotReport, into attachmentDir: URL) throws -> SnapshotReport {
         var suites = report.suites
+        var jobs: [AttachmentCopyJob] = []
 
         for suiteIndex in suites.indices {
             for caseIndex in suites[suiteIndex].tests.indices {
-                var testCase = suites[suiteIndex].tests[caseIndex]
-                testCase.attachments = try testCase.attachments.map { attachment in
-                    let source = URL(fileURLWithPath: attachment.path)
-                    if !fileManager.fileExists(atPath: source.path) {
-                        return attachment
-                    }
-
-                    let safeName = sanitize("\(testCase.id)-\(source.lastPathComponent)")
-                    let destination = attachmentDir.appendingPathComponent(safeName)
-                    if fileManager.fileExists(atPath: destination.path) {
-                        try fileManager.removeItem(at: destination)
-                    }
-                    try fileManager.copyItem(at: source, to: destination)
-
-                    return SnapshotAttachment(name: attachment.name, type: attachment.type, path: "attachments/\(safeName)")
+                let testCase = suites[suiteIndex].tests[caseIndex]
+                for attachmentIndex in testCase.attachments.indices {
+                    jobs.append(.init(
+                        suiteIndex: suiteIndex,
+                        testIndex: caseIndex,
+                        attachmentIndex: attachmentIndex,
+                        testID: testCase.id,
+                        attachment: testCase.attachments[attachmentIndex]
+                    ))
                 }
-                suites[suiteIndex].tests[caseIndex] = testCase
             }
+        }
+
+        let workerCount = max(1, min(ProcessInfo.processInfo.activeProcessorCount, jobs.count))
+        let queue = DispatchQueue(label: "snapshot-report.html.copy.queue", attributes: .concurrent)
+        let semaphore = DispatchSemaphore(value: workerCount)
+        let group = DispatchGroup()
+        let state = AttachmentCopyState()
+        let maxFilenameBytes = self.maxFilenameBytes
+
+        for job in jobs {
+            group.enter()
+            semaphore.wait()
+            queue.async {
+                defer {
+                    semaphore.signal()
+                    group.leave()
+                }
+                do {
+                    let copied = try HTMLRenderer.copyAttachment(
+                        job: job,
+                        into: attachmentDir,
+                        maxFilenameBytes: maxFilenameBytes
+                    )
+                    state.set(attachment: copied.attachment, warning: copied.warning, for: job.key)
+                } catch {
+                    state.setFirstErrorIfNeeded(error)
+                }
+            }
+        }
+
+        group.wait()
+        if let firstError = state.firstError() {
+            throw firstError
+        }
+
+        for warning in state.warnings().sorted() {
+            fputs("[snapshot-report] warning: \(warning)\n", stderr)
+        }
+        for job in jobs {
+            guard let copied = state.attachment(for: job.key) else { continue }
+            suites[job.suiteIndex].tests[job.testIndex].attachments[job.attachmentIndex] = copied
         }
 
         return SnapshotReport(name: report.name, generatedAt: report.generatedAt, suites: suites, metadata: report.metadata)
@@ -135,7 +171,62 @@ struct HTMLRenderer {
         ]
     }
 
-    private func sanitize(_ value: String) -> String {
+    private static func copyAttachment(
+        job: AttachmentCopyJob,
+        into attachmentDir: URL,
+        maxFilenameBytes: Int
+    ) throws -> (attachment: SnapshotAttachment, warning: String?) {
+        let fileManager = FileManager.default
+        let source = URL(fileURLWithPath: job.attachment.path)
+        guard fileManager.fileExists(atPath: source.path) else {
+            return (job.attachment, nil)
+        }
+
+        let originalFilename = sanitize("\(job.testID)-\(source.lastPathComponent)")
+        let shortened = shortenFilenameIfNeeded(
+            originalFilename,
+            maxBytes: maxFilenameBytes,
+            hashSeed: "\(job.testID)|\(source.path)"
+        )
+        let destination = attachmentDir.appendingPathComponent(shortened.filename)
+        if fileManager.fileExists(atPath: destination.path) {
+            try fileManager.removeItem(at: destination)
+        }
+        try fileManager.copyItem(at: source, to: destination)
+
+        return (
+            SnapshotAttachment(name: job.attachment.name, type: job.attachment.type, path: "attachments/\(shortened.filename)"),
+            shortened.warning
+        )
+    }
+
+    private static func shortenFilenameIfNeeded(_ filename: String, maxBytes: Int, hashSeed: String) -> (filename: String, warning: String?) {
+        guard filename.lengthOfBytes(using: .utf8) > maxBytes else {
+            return (filename, nil)
+        }
+
+        let url = URL(fileURLWithPath: filename)
+        let ext = url.pathExtension
+        let base = url.deletingPathExtension().lastPathComponent
+        let hash = shortHash(hashSeed)
+        let suffix = ext.isEmpty ? "-\(hash)" : "-\(hash).\(ext)"
+        let availableBytes = max(1, maxBytes - suffix.lengthOfBytes(using: .utf8))
+        let shortenedBase = String(decoding: base.utf8.prefix(availableBytes), as: UTF8.self)
+        let shortened = shortenedBase + suffix
+        let warning = "Attachment filename exceeded \(maxBytes) bytes and was shortened: \(filename) -> \(shortened)"
+        return (shortened, warning)
+    }
+
+    private static func shortHash(_ value: String) -> String {
+        var hash: UInt64 = 0xcbf29ce484222325
+        for byte in value.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x100000001b3
+        }
+        return String(format: "%016llx", hash)
+    }
+
+    private static func sanitize(_ value: String) -> String {
         value.replacingOccurrences(of: "[^a-zA-Z0-9._-]", with: "-", options: .regularExpression)
     }
 
@@ -373,5 +464,65 @@ struct HTMLRenderer {
             return value
         }
         return nil
+    }
+}
+
+private struct AttachmentCopyJob: Sendable {
+    let suiteIndex: Int
+    let testIndex: Int
+    let attachmentIndex: Int
+    let testID: String
+    let attachment: SnapshotAttachment
+
+    var key: AttachmentCopyKey {
+        AttachmentCopyKey(suiteIndex: suiteIndex, testIndex: testIndex, attachmentIndex: attachmentIndex)
+    }
+}
+
+private struct AttachmentCopyKey: Hashable, Sendable {
+    let suiteIndex: Int
+    let testIndex: Int
+    let attachmentIndex: Int
+}
+
+private final class AttachmentCopyState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var attachmentsByKey: [AttachmentCopyKey: SnapshotAttachment] = [:]
+    private var warningMessages: Set<String> = []
+    private var storedError: Error?
+
+    func set(attachment: SnapshotAttachment, warning: String?, for key: AttachmentCopyKey) {
+        lock.lock()
+        attachmentsByKey[key] = attachment
+        if let warning {
+            warningMessages.insert(warning)
+        }
+        lock.unlock()
+    }
+
+    func attachment(for key: AttachmentCopyKey) -> SnapshotAttachment? {
+        lock.lock()
+        defer { lock.unlock() }
+        return attachmentsByKey[key]
+    }
+
+    func warnings() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return Array(warningMessages)
+    }
+
+    func setFirstErrorIfNeeded(_ error: Error) {
+        lock.lock()
+        if storedError == nil {
+            storedError = error
+        }
+        lock.unlock()
+    }
+
+    func firstError() -> Error? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedError
     }
 }
