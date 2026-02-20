@@ -97,18 +97,80 @@ struct HTMLRenderer {
     }
 
     private func renderTemplate(report: SnapshotReport, outputDirectory: URL, customTemplatePath: String?) throws -> String {
-        let template: String
-        if let customTemplatePath {
-            template = try String(contentsOfFile: customTemplatePath, encoding: .utf8)
-        } else {
-            guard let resourceURL = Bundle.module.url(forResource: "default-report", withExtension: "stencil") else {
-                throw SnapshotReportError.writeFailed("Missing bundled template")
-            }
-            template = try String(contentsOf: resourceURL, encoding: .utf8)
-        }
+        let template = try loadTemplate(customTemplatePath: customTemplatePath)
 
         let environment = Environment(trimBehaviour: .smart)
         return try environment.renderTemplate(string: template, context: makeContext(report: report, outputDirectory: outputDirectory))
+    }
+
+    private func loadTemplate(customTemplatePath: String?) throws -> String {
+        if let customTemplatePath {
+            return try String(contentsOfFile: customTemplatePath, encoding: .utf8)
+        }
+
+        for candidate in Self.defaultTemplateCandidateURLs() {
+            guard fileManager.fileExists(atPath: candidate.path) else { continue }
+            return try String(contentsOf: candidate, encoding: .utf8)
+        }
+
+        let searchedPaths = Self.defaultTemplateCandidateURLs().map(\.path).joined(separator: "\n- ")
+        throw SnapshotReportError.writeFailed(
+            """
+            Missing bundled template (default-report.stencil).
+            Searched:
+            - \(searchedPaths)
+            Provide --html-template <path> or reinstall snapshot-report.
+            """
+        )
+    }
+
+    static func defaultTemplateCandidateURLs(
+        executablePath: String = CommandLine.arguments.first ?? ""
+    ) -> [URL] {
+        let bundleName = "SnapshotReportKit_SnapshotReportCore.bundle"
+        let templateRelativePath = "Contents/Resources/default-report.stencil"
+        var candidateDirectories: [URL] = []
+
+        if executablePath.isEmpty == false {
+            let providedExecURL = URL(fileURLWithPath: executablePath)
+            candidateDirectories.append(providedExecURL.deletingLastPathComponent())
+
+            let resolvedExecURL = providedExecURL.resolvingSymlinksInPath()
+            candidateDirectories.append(resolvedExecURL.deletingLastPathComponent())
+        }
+
+        var seenDirectoryPaths = Set<String>()
+        var uniqueDirectories: [URL] = []
+        for directory in candidateDirectories {
+            let standardized = directory.standardizedFileURL.path
+            if seenDirectoryPaths.insert(standardized).inserted {
+                uniqueDirectories.append(directory)
+            }
+        }
+
+        var candidates: [URL] = []
+        for directory in uniqueDirectories {
+            let bundleInExecutableDirectory = directory
+                .appendingPathComponent(bundleName, isDirectory: true)
+                .appendingPathComponent(templateRelativePath)
+            candidates.append(bundleInExecutableDirectory)
+
+            let bundleInLibexecDirectory = directory
+                .appendingPathComponent("..", isDirectory: true)
+                .appendingPathComponent("libexec", isDirectory: true)
+                .appendingPathComponent(bundleName, isDirectory: true)
+                .appendingPathComponent(templateRelativePath)
+            candidates.append(bundleInLibexecDirectory)
+        }
+
+        let sourceTemplate = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Resources/default-report.stencil")
+        candidates.append(sourceTemplate)
+
+        return candidates
     }
 
     private func makeContext(report: SnapshotReport, outputDirectory: URL) -> [String: Any] {
