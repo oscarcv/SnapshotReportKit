@@ -39,7 +39,7 @@ jobs:
       - name: Run tests
         run: |
           set -euo pipefail
-          LOG_FILE="$(mktemp -t swift-test-log.XXXXXX)"
+          LOG_FILE="$(mktemp -t swift-test-log.XXXXXX.log)"
           echo "Running swift test (logs: ${LOG_FILE})"
 
           swift test --verbose >"${LOG_FILE}" 2>&1 &
@@ -51,6 +51,9 @@ jobs:
             NOW_TS=$(date +%s)
             ELAPSED=$((NOW_TS - START_TS))
             echo "[ci] swift test still running (${ELAPSED}s elapsed)"
+            ps -p "${TEST_PID}" -o pid=,ppid=,%cpu=,%mem=,etime=,command= || true
+            echo "===== swift test log (tail -n 40) ====="
+            tail -n 40 "${LOG_FILE}" || true
 
             if [ "${ELAPSED}" -ge "${TIMEOUT_SECONDS}" ]; then
               echo "[ci] ERROR: swift test exceeded timeout (${TIMEOUT_SECONDS}s)"
@@ -65,8 +68,10 @@ jobs:
             sleep 30
           done
 
+          set +e
           wait "${TEST_PID}"
           STATUS=$?
+          set -e
           echo "===== swift test log (tail) ====="
           tail -n 200 "${LOG_FILE}" || true
           exit "${STATUS}"
