@@ -43,6 +43,11 @@
       overflow: auto;
     }
 
+    :focus-visible {
+      outline: 2px solid var(--primary);
+      outline-offset: 2px;
+    }
+
     .title { font-size: 1.05rem; font-weight: 700; margin: 0 0 0.25rem; }
     .muted { color: var(--muted); }
 
@@ -77,9 +82,57 @@
       justify-content: space-between;
       gap: 1rem;
       margin-bottom: 1rem;
+      flex-wrap: wrap;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      padding: 0.6rem 0;
+      background: linear-gradient(180deg, rgba(16,25,34,0.98), rgba(16,25,34,0.86));
+      backdrop-filter: blur(4px);
     }
 
     .topbar h1 { margin: 0; font-size: 1.6rem; }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.55rem;
+      align-items: center;
+    }
+
+    .toolbar input[type="search"] {
+      min-width: 260px;
+      max-width: 520px;
+      width: min(52vw, 520px);
+      background: #0f1821;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.45rem 0.65rem;
+      font-size: 0.85rem;
+    }
+
+    .toolbar button {
+      background: #0f1821;
+      color: #d3deea;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.42rem 0.62rem;
+      font-size: 0.78rem;
+      cursor: pointer;
+    }
+
+    .toolbar button.active {
+      background: rgba(19, 127, 236, 0.18);
+      border-color: var(--primary);
+      color: #cfe7ff;
+    }
+
+    .toolbar button:hover { border-color: #44607c; }
+    .toolbar-help {
+      color: var(--muted);
+      font-size: 0.72rem;
+      margin-left: 0.35rem;
+    }
 
     .summary {
       display: grid;
@@ -119,6 +172,57 @@
       background: var(--surface-soft);
       border-bottom: 1px solid var(--border);
       font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
+
+    .suite-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      font-weight: 500;
+      color: var(--muted);
+      font-size: 0.76rem;
+    }
+
+    .suite-toggle {
+      border: 1px solid var(--border);
+      background: #101c28;
+      color: #d3deea;
+      border-radius: 6px;
+      font-size: 0.74rem;
+      padding: 0.24rem 0.48rem;
+      cursor: pointer;
+    }
+
+    .suite-collapsed .suite-table-wrap {
+      display: none;
+    }
+
+    .suite-count-chip {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 0.05rem 0.42rem;
+      color: #bfd2e7;
+      background: #132233;
+    }
+
+    .hidden-row {
+      display: none;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
     }
 
     table {
@@ -309,6 +413,23 @@
     }
 
     .attachment a { color: #7ab8ff; text-decoration: none; }
+    .attachment-meta {
+      margin-top: 0.35rem;
+      font-size: 0.7rem;
+      color: var(--muted);
+      font-family: "JetBrains Mono", "SFMono-Regular", monospace;
+      word-break: break-all;
+    }
+
+    .attachment-empty {
+      border: 1px dashed var(--border);
+      border-radius: 8px;
+      padding: 0.65rem;
+      color: var(--muted);
+      font-size: 0.78rem;
+      text-align: center;
+      background: #0e171f;
+    }
 
     .reference-btn {
       display: inline-flex;
@@ -349,7 +470,23 @@
       <section class="topbar">
         <div>
           <h1>{{ report.name }}</h1>
-          <div class="muted">Modern Snapshot Dashboard</div>
+          <div class="muted">Snapshot QA Dashboard</div>
+        </div>
+        <div class="toolbar">
+          <label class="sr-only" for="searchInput">Search tests</label>
+          <input id="searchInput" type="search" placeholder="Search test title..." />
+          <button type="button" class="filter-btn active" data-filter="all">All</button>
+          <button type="button" class="filter-btn" data-filter="failed">Failed</button>
+          <button type="button" class="filter-btn" data-filter="passed">Passed</button>
+          <button type="button" class="filter-btn" data-filter="skipped">Skipped</button>
+          <button type="button" class="variant-btn active" data-variant="hcdark">High Contrast Dark</button>
+          <button type="button" class="variant-btn active" data-variant="dark">Dark</button>
+          <button type="button" class="variant-btn active" data-variant="hclight">High Contrast Light</button>
+          <button type="button" class="variant-btn active" data-variant="light">Light</button>
+          <button type="button" id="failedFirstBtn">Failed First: Off</button>
+          <button type="button" id="expandAllBtn">Expand All</button>
+          <button type="button" id="collapseAllBtn">Collapse Passed Suites</button>
+          <span class="toolbar-help" aria-hidden="true">Shortcuts: / search, f failed, e expand/collapse</span>
         </div>
       </section>
 
@@ -362,8 +499,15 @@
       </section>
 
       {% for suite in suites %}
-        <section id="suite-{{ forloop.counter }}" class="suite">
-          <div class="suite-header">{{ suite.name }}</div>
+        <section id="suite-{{ forloop.counter }}" class="suite" data-suite-name="{{ suite.name|lowercase }}">
+          <div class="suite-header">
+            <span>{{ suite.name }}</span>
+            <span class="suite-actions">
+              <span class="suite-count-chip">{{ suite.tests.count }} tests</span>
+              <button type="button" class="suite-toggle" data-suite-toggle>Collapse</button>
+            </span>
+          </div>
+          <div class="suite-table-wrap">
           <table>
             <thead>
               <tr>
@@ -374,7 +518,7 @@
             </thead>
             <tbody>
               {% for test in suite.tests %}
-                <tr>
+                <tr class="test-row" data-status="{{ test.status }}" data-suite="{{ suite.name|lowercase }}" data-test="{{ test.name|lowercase }}" data-title="{{ test.name|lowercase }}" data-class="{{ test.className|lowercase }}" data-key="suite{{ forloop.parentloop.counter }}-test{{ forloop.counter }}">
                   <td>
                     <span class="badge {{ test.status }}">{{ test.status }}</span>
                   </td>
@@ -382,7 +526,7 @@
                   <td>{{ test.className }}</td>
                 </tr>
                 {% if test.status == "failed" %}
-                  <tr>
+                  <tr class="detail-row" data-parent="suite{{ forloop.parentloop.counter }}-test{{ forloop.counter }}">
                     <td class="details-cell" colspan="3">
                       <details class="failure-details">
                         <summary>Details</summary>
@@ -401,31 +545,31 @@ File: {{ test.failure.file }}{% if test.failure.line != "" %}:{{ test.failure.li
                               <div class="assert-group">
                                 <div class="assert-group-title">{{ group.groupName }}</div>
                                 <div class="failed-assert-row">
-                                  {% if group.snapshot.exists %}
+                                  {% if group.snapshot.exists and group.snapshot.isEmpty == false %}
                                     <div class="failed-slot">
                                       <div class="name">Snapshot</div>
                                       <img src="{{ group.snapshot.path }}" alt="Snapshot" />
                                     </div>
                                   {% else %}
-                                    <div class="failed-slot empty">Snapshot unavailable</div>
+                                    <div class="failed-slot empty">Snapshot unavailable{% if group.snapshot.exists and group.snapshot.isEmpty %} (empty file){% endif %}</div>
                                   {% endif %}
 
-                                  {% if group.diff.exists %}
+                                  {% if group.diff.exists and group.diff.isEmpty == false %}
                                     <div class="failed-slot">
                                       <div class="name">Diff</div>
                                       <img src="{{ group.diff.path }}" alt="Diff" />
                                     </div>
                                   {% else %}
-                                    <div class="failed-slot empty">Diff unavailable</div>
+                                    <div class="failed-slot empty">Diff unavailable{% if group.diff.exists and group.diff.isEmpty %} (empty file){% endif %}</div>
                                   {% endif %}
 
-                                  {% if group.failure.exists %}
+                                  {% if group.failure.exists and group.failure.isEmpty == false %}
                                     <div class="failed-slot">
                                       <div class="name">Failure</div>
                                       <img src="{{ group.failure.path }}" alt="Failure" />
                                     </div>
                                   {% else %}
-                                    <div class="failed-slot empty">Failure unavailable</div>
+                                    <div class="failed-slot empty">Failure unavailable{% if group.failure.exists and group.failure.isEmpty %} (empty file){% endif %}</div>
                                   {% endif %}
                                 </div>
                               </div>
@@ -438,7 +582,7 @@ File: {{ test.failure.file }}{% if test.failure.line != "" %}:{{ test.failure.li
                 {% endif %}
 
                 {% if test.status == "passed" and test.passedGroups.count > 0 %}
-                  <tr>
+                  <tr class="detail-row" data-parent="suite{{ forloop.parentloop.counter }}-test{{ forloop.counter }}">
                     <td class="details-cell" colspan="3">
                       <div class="failed-assert-grid">
                         {% for group in test.passedGroups %}
@@ -448,13 +592,20 @@ File: {{ test.failure.file }}{% if test.failure.line != "" %}:{{ test.failure.li
                               {% for attachment in group.attachments %}
                                 <div class="attachment" style="order: {{ attachment.variantOrder }};">
                                   <div class="name">{{ attachment.name }} ({{ attachment.type }})</div>
-                                  {% if attachment.type == "png" %}
+                                  {% if attachment.exists == false %}
+                                    <div class="attachment-empty">Attachment missing on disk</div>
+                                  {% elif attachment.isEmpty %}
+                                    <div class="attachment-empty">Attachment exists but file is empty</div>
+                                  {% elif attachment.type == "png" %}
                                     <img src="{{ attachment.path }}" alt="{{ attachment.name }}" />
                                   {% elif attachment.type == "dump" or attachment.type == "text" %}
                                     <pre>{% if attachment.content != "" %}{{ attachment.content }}{% else %}Attachment file path: {{ attachment.path }}{% endif %}</pre>
                                   {% else %}
                                     <a href="{{ attachment.path }}">Download attachment</a>
                                   {% endif %}
+                                  <div class="attachment-meta">
+                                    size={{ attachment.sizeBytes }} bytes
+                                  </div>
                                 </div>
                               {% endfor %}
                             </div>
@@ -467,9 +618,298 @@ File: {{ test.failure.file }}{% if test.failure.line != "" %}:{{ test.failure.li
               {% endfor %}
             </tbody>
           </table>
+          </div>
         </section>
       {% endfor %}
     </main>
   </div>
+  <script>
+    (() => {
+      const storageKey = "snapshot-report-ui-v1";
+      const searchInput = document.getElementById("searchInput");
+      const filterButtons = Array.from(document.querySelectorAll(".filter-btn"));
+      const variantButtons = Array.from(document.querySelectorAll(".variant-btn"));
+      const failedFirstBtn = document.getElementById("failedFirstBtn");
+      const expandAllBtn = document.getElementById("expandAllBtn");
+      const collapseAllBtn = document.getElementById("collapseAllBtn");
+      const suites = Array.from(document.querySelectorAll(".suite"));
+      const testRows = Array.from(document.querySelectorAll(".test-row"));
+      const detailsRows = Array.from(document.querySelectorAll(".detail-row"));
+      const suiteToggles = Array.from(document.querySelectorAll("[data-suite-toggle]"));
+
+      const allVariants = ["hcdark", "dark", "hclight", "light"];
+      let activeFilter = "all";
+      let activeVariants = new Set(allVariants);
+      let failedFirst = false;
+      const collapsedSuites = new Set();
+      let hasManualCollapseState = false;
+
+      function saveState() {
+        try {
+          localStorage.setItem(storageKey, JSON.stringify({
+            search: searchInput?.value || "",
+            activeFilter,
+            activeVariants: Array.from(activeVariants),
+            failedFirst,
+            collapsedSuites: Array.from(collapsedSuites),
+            hasManualCollapseState,
+          }));
+        } catch (_) {}
+      }
+
+      function loadState() {
+        try {
+          const raw = localStorage.getItem(storageKey);
+          if (!raw) return;
+          const state = JSON.parse(raw);
+          if (typeof state.search === "string" && searchInput) searchInput.value = state.search;
+          if (typeof state.activeFilter === "string") activeFilter = state.activeFilter;
+          if (Array.isArray(state.activeVariants)) {
+            const allowed = new Set(allVariants);
+            const restored = state.activeVariants
+              .map((value) => String(value))
+              .filter((value) => allowed.has(value));
+            if (restored.length > 0) activeVariants = new Set(restored);
+          }
+          if (typeof state.failedFirst === "boolean") failedFirst = state.failedFirst;
+          if (Array.isArray(state.collapsedSuites)) {
+            state.collapsedSuites.forEach((id) => collapsedSuites.add(String(id)));
+          }
+          if (typeof state.hasManualCollapseState === "boolean") {
+            hasManualCollapseState = state.hasManualCollapseState;
+          }
+        } catch (_) {}
+      }
+
+      function rowMatchesFilter(row) {
+        if (activeFilter === "all") return true;
+        return (row.dataset.status || "") === activeFilter;
+      }
+
+      function rowMatchesSearch(row, query) {
+        if (!query) return true;
+        const title = normalizeTestTitle(row.dataset.title || row.dataset.test || "");
+        return title.includes(query);
+      }
+
+      function inferVariant(testName) {
+        const value = (testName || "").toLowerCase();
+        if (value.includes("hclight") || value.includes("high-contrast-light")) return "hclight";
+        if (value.includes("hcdark") || value.includes("high-contrast-dark")) return "hcdark";
+        if (value.includes("_light") || value.endsWith("-light")) return "light";
+        if (value.includes("_dark") || value.endsWith("-dark")) return "dark";
+        return "other";
+      }
+
+      function rowMatchesVariant(row) {
+        if (activeVariants.size === allVariants.length) return true;
+        return activeVariants.has(inferVariant(row.dataset.test || ""));
+      }
+
+      function normalizeTestTitle(value) {
+        return value
+          .toLowerCase()
+          .replace(/(_hclight|_hcdark|_light|_dark)$/i, "")
+          .replace(/(-high-contrast-light|-high-contrast-dark|-light|-dark)$/i, "")
+          .trim();
+      }
+
+      function applyFilters() {
+        const query = (searchInput?.value || "").trim().toLowerCase();
+        const filteringActive = (
+          query.length > 0 ||
+          activeFilter !== "all" ||
+          activeVariants.size < allVariants.length
+        );
+        const visibleByKey = new Map();
+
+        for (const row of testRows) {
+          const key = row.dataset.key || "";
+          const visible = rowMatchesFilter(row) && rowMatchesVariant(row) && rowMatchesSearch(row, query);
+          visibleByKey.set(key, visible);
+          row.classList.toggle("hidden-row", !visible);
+        }
+
+        for (const detailRow of detailsRows) {
+          const parentKey = detailRow.dataset.parent || "";
+          const parentVisible = visibleByKey.get(parentKey) === true;
+          detailRow.classList.toggle("hidden-row", !parentVisible);
+        }
+
+        for (const suite of suites) {
+          const rows = Array.from(suite.querySelectorAll(".test-row"));
+          const hasVisible = rows.some((r) => !r.classList.contains("hidden-row"));
+          suite.classList.toggle("hidden-row", !hasVisible);
+        }
+
+        for (const suite of suites) {
+          if (suite.classList.contains("hidden-row")) continue;
+          if (filteringActive) {
+            setSuiteCollapsed(suite, false, false);
+            continue;
+          }
+          if (hasManualCollapseState) {
+            setSuiteCollapsed(suite, collapsedSuites.has(suite.id || ""), false);
+            continue;
+          }
+          const hasFailure = Array.from(suite.querySelectorAll(".test-row"))
+            .some((row) => row.dataset.status === "failed");
+          setSuiteCollapsed(suite, !hasFailure, false);
+        }
+      }
+
+      function applyFailedFirstSorting() {
+        for (const suite of suites) {
+          const tbody = suite.querySelector("tbody");
+          if (!tbody) continue;
+          const rows = Array.from(tbody.querySelectorAll(":scope > tr"));
+          const groups = [];
+
+          for (let i = 0; i < rows.length; i++) {
+            const row = rows[i];
+            if (!row.classList.contains("test-row")) continue;
+            const key = row.dataset.key || "";
+            const group = [row];
+            for (let j = i + 1; j < rows.length; j++) {
+              const next = rows[j];
+              if (next.classList.contains("test-row")) break;
+              if (next.classList.contains("detail-row") && next.dataset.parent === key) {
+                group.push(next);
+              }
+            }
+            groups.push(group);
+          }
+
+          groups.sort((a, b) => {
+            const sa = a[0].dataset.status || "";
+            const sb = b[0].dataset.status || "";
+            if (sa === sb) return 0;
+            if (sa === "failed") return -1;
+            if (sb === "failed") return 1;
+            if (sa === "skipped") return 1;
+            if (sb === "skipped") return -1;
+            return 0;
+          });
+
+          for (const group of groups) {
+            for (const row of group) tbody.appendChild(row);
+          }
+        }
+      }
+
+      function setSuiteCollapsed(suite, collapsed, persist = true) {
+        suite.classList.toggle("suite-collapsed", collapsed);
+        const btn = suite.querySelector("[data-suite-toggle]");
+        if (btn) btn.textContent = collapsed ? "Expand" : "Collapse";
+        if (!persist) return;
+        hasManualCollapseState = true;
+        const suiteId = suite.id || "";
+        if (suiteId) {
+          if (collapsed) collapsedSuites.add(suiteId);
+          else collapsedSuites.delete(suiteId);
+        }
+      }
+
+      filterButtons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          activeFilter = btn.dataset.filter || "all";
+          filterButtons.forEach((b) => b.classList.toggle("active", b === btn));
+          applyFilters();
+          saveState();
+        });
+      });
+
+      variantButtons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const variant = btn.dataset.variant || "";
+          if (!allVariants.includes(variant)) return;
+          if (activeVariants.has(variant)) {
+            if (activeVariants.size === 1) return;
+            activeVariants.delete(variant);
+          } else {
+            activeVariants.add(variant);
+          }
+          variantButtons.forEach((b) => b.classList.toggle("active", activeVariants.has(b.dataset.variant || "")));
+          applyFilters();
+          saveState();
+        });
+      });
+
+      searchInput?.addEventListener("input", () => {
+        applyFilters();
+        saveState();
+      });
+
+      failedFirstBtn?.addEventListener("click", () => {
+        failedFirst = !failedFirst;
+        failedFirstBtn.textContent = `Failed First: ${failedFirst ? "On" : "Off"}`;
+        if (failedFirst) {
+          applyFailedFirstSorting();
+          applyFilters();
+        }
+        saveState();
+      });
+
+      expandAllBtn?.addEventListener("click", () => {
+        suites.forEach((suite) => setSuiteCollapsed(suite, false, true));
+        saveState();
+      });
+
+      collapseAllBtn?.addEventListener("click", () => {
+        suites.forEach((suite) => {
+          const hasFailure = Array.from(suite.querySelectorAll(".test-row"))
+            .some((row) => row.dataset.status === "failed");
+          setSuiteCollapsed(suite, !hasFailure, true);
+        });
+        saveState();
+      });
+
+      suiteToggles.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const suite = btn.closest(".suite");
+          if (!suite) return;
+          setSuiteCollapsed(suite, !suite.classList.contains("suite-collapsed"), true);
+          saveState();
+        });
+      });
+
+      document.addEventListener("keydown", (event) => {
+        const target = event.target;
+        const isTypingField = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
+        if (event.key === "/" && !isTypingField) {
+          event.preventDefault();
+          searchInput?.focus();
+          searchInput?.select();
+          return;
+        }
+        if (event.key.toLowerCase() === "f" && !isTypingField) {
+          event.preventDefault();
+          const failedFilterButton = filterButtons.find((btn) => (btn.dataset.filter || "") === "failed");
+          failedFilterButton?.click();
+          return;
+        }
+        if (event.key.toLowerCase() === "e" && !isTypingField) {
+          event.preventDefault();
+          const anyCollapsed = suites.some((suite) => suite.classList.contains("suite-collapsed"));
+          if (anyCollapsed) expandAllBtn?.click();
+          else collapseAllBtn?.click();
+        }
+      });
+
+      loadState();
+      filterButtons.forEach((btn) => {
+        btn.classList.toggle("active", (btn.dataset.filter || "all") === activeFilter);
+      });
+      variantButtons.forEach((btn) => {
+        btn.classList.toggle("active", activeVariants.has(btn.dataset.variant || ""));
+      });
+      failedFirstBtn.textContent = `Failed First: ${failedFirst ? "On" : "Off"}`;
+      if (failedFirst) applyFailedFirstSorting();
+      applyFilters();
+      if (!hasManualCollapseState) {
+        collapseAllBtn?.click();
+      }
+    })();
+  </script>
 </body>
 </html>

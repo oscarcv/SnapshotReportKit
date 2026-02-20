@@ -108,16 +108,14 @@ struct HTMLRenderer {
             return try String(contentsOfFile: customTemplatePath, encoding: .utf8)
         }
 
-        if let moduleTemplateURL = Bundle.module.url(forResource: "default-report", withExtension: "stencil") {
-            return try String(contentsOf: moduleTemplateURL, encoding: .utf8)
-        }
-
-        for candidate in Self.defaultTemplateCandidateURLs() {
+        for candidate in Self.environmentTemplateCandidateURLs() + Self.defaultTemplateCandidateURLs() {
             guard fileManager.fileExists(atPath: candidate.path) else { continue }
             return try String(contentsOf: candidate, encoding: .utf8)
         }
 
-        let searchedPaths = Self.defaultTemplateCandidateURLs().map(\.path).joined(separator: "\n- ")
+        let searchedPaths = (Self.environmentTemplateCandidateURLs() + Self.defaultTemplateCandidateURLs())
+            .map(\.path)
+            .joined(separator: "\n- ")
         throw SnapshotReportError.writeFailed(
             """
             Missing bundled template (default-report.stencil).
@@ -135,6 +133,14 @@ struct HTMLRenderer {
         let templateRelativePaths = [
             "default-report.stencil",
             "Contents/Resources/default-report.stencil",
+        ]
+        let templateBasenames = ["default-report.stencil"]
+        let bundleBaseRelativeDirectories = [
+            "",
+            "libexec",
+            "share",
+            "share/snapshot-report",
+            "Resources",
         ]
         var candidateDirectories: [URL] = []
 
@@ -155,20 +161,43 @@ struct HTMLRenderer {
             }
         }
 
-        var candidates: [URL] = []
+        var searchRoots: [URL] = []
         for directory in uniqueDirectories {
-            for templateRelativePath in templateRelativePaths {
-                let bundleInExecutableDirectory = directory
-                    .appendingPathComponent(bundleName, isDirectory: true)
-                    .appendingPathComponent(templateRelativePath)
-                candidates.append(bundleInExecutableDirectory)
+            var current = directory
+            for _ in 0..<5 {
+                searchRoots.append(current)
+                let parent = current.deletingLastPathComponent()
+                if parent.path == current.path { break }
+                current = parent
+            }
+        }
 
-                let bundleInLibexecDirectory = directory
-                    .appendingPathComponent("..", isDirectory: true)
-                    .appendingPathComponent("libexec", isDirectory: true)
-                    .appendingPathComponent(bundleName, isDirectory: true)
-                    .appendingPathComponent(templateRelativePath)
-                candidates.append(bundleInLibexecDirectory)
+        var seenRootPaths = Set<String>()
+        var uniqueRoots: [URL] = []
+        for root in searchRoots {
+            let standardized = root.standardizedFileURL.path
+            if seenRootPaths.insert(standardized).inserted {
+                uniqueRoots.append(root)
+            }
+        }
+
+        var candidates: [URL] = []
+        for root in uniqueRoots {
+            for baseRelativeDirectory in bundleBaseRelativeDirectories {
+                let base = baseRelativeDirectory.isEmpty
+                    ? root
+                    : root.appendingPathComponent(baseRelativeDirectory, isDirectory: true)
+
+                for templateRelativePath in templateRelativePaths {
+                    let bundledTemplate = base
+                        .appendingPathComponent(bundleName, isDirectory: true)
+                        .appendingPathComponent(templateRelativePath)
+                    candidates.append(bundledTemplate)
+                }
+
+                for templateBasename in templateBasenames {
+                    candidates.append(base.appendingPathComponent(templateBasename))
+                }
             }
         }
 
@@ -178,6 +207,50 @@ struct HTMLRenderer {
             .deletingLastPathComponent()
             .appendingPathComponent("Resources/default-report.stencil")
         candidates.append(sourceTemplate)
+
+        var seenCandidatePaths = Set<String>()
+        var uniqueCandidates: [URL] = []
+        for candidate in candidates {
+            let standardized = candidate.standardizedFileURL.path
+            if seenCandidatePaths.insert(standardized).inserted {
+                uniqueCandidates.append(candidate)
+            }
+        }
+        return uniqueCandidates
+    }
+
+    static func environmentTemplateCandidateURLs(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> [URL] {
+        let templateRelativePaths = [
+            "default-report.stencil",
+            "Contents/Resources/default-report.stencil",
+        ]
+        let bundleName = "SnapshotReportKit_SnapshotReportCore.bundle"
+        var candidates: [URL] = []
+
+        if let templatePath = environment["SNAPSHOT_REPORT_HTML_TEMPLATE"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           templatePath.isEmpty == false {
+            candidates.append(URL(fileURLWithPath: templatePath))
+        }
+        if let bundlePath = environment["SNAPSHOT_REPORT_RESOURCE_BUNDLE"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           bundlePath.isEmpty == false {
+            let bundleURL = URL(fileURLWithPath: bundlePath, isDirectory: true)
+            for templateRelativePath in templateRelativePaths {
+                candidates.append(bundleURL.appendingPathComponent(templateRelativePath))
+            }
+        }
+        if let installRoot = environment["SNAPSHOT_REPORT_INSTALL_ROOT"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           installRoot.isEmpty == false {
+            let rootURL = URL(fileURLWithPath: installRoot, isDirectory: true)
+            for templateRelativePath in templateRelativePaths {
+                candidates.append(
+                    rootURL
+                        .appendingPathComponent(bundleName, isDirectory: true)
+                        .appendingPathComponent(templateRelativePath)
+                )
+            }
+        }
 
         return candidates
     }
@@ -209,6 +282,7 @@ struct HTMLRenderer {
         let orderedAttachments = sortAttachmentsForVariantDisplay(test.attachments)
         let attachmentsArray: [[String: Any]] = orderedAttachments.map { attachment in
             let fullPath = outputDirectory.appendingPathComponent(attachment.path).path
+            let metadata = attachmentFileMetadata(fullPath: fullPath)
             let textContent: String
             if attachment.type == .text || attachment.type == .dump {
                 textContent = (try? String(contentsOfFile: fullPath, encoding: .utf8)) ?? ""
@@ -220,7 +294,10 @@ struct HTMLRenderer {
                 "type": attachment.type.rawValue,
                 "path": attachment.path,
                 "content": textContent,
-                "variantOrder": variantOrder(for: attachment.path)
+                "variantOrder": variantOrder(for: attachment.path),
+                "exists": metadata.exists,
+                "isEmpty": metadata.isEmpty,
+                "sizeBytes": metadata.sizeBytes
             ]
         }
         let failedGroups = makeFailedAttachmentGroups(for: test, outputDirectory: outputDirectory)
@@ -402,6 +479,7 @@ struct HTMLRenderer {
         return order.map { key in
             let items: [[String: Any]] = grouped[key, default: []].map { attachment in
                 let fullPath = outputDirectory.appendingPathComponent(attachment.path).path
+                let metadata = attachmentFileMetadata(fullPath: fullPath)
                 let textContent: String
                 if attachment.type == .text || attachment.type == .dump {
                     textContent = (try? String(contentsOfFile: fullPath, encoding: .utf8)) ?? ""
@@ -413,7 +491,10 @@ struct HTMLRenderer {
                     "type": attachment.type.rawValue,
                     "path": attachment.path,
                     "content": textContent,
-                    "variantOrder": variantOrder(for: attachment.path)
+                    "variantOrder": variantOrder(for: attachment.path),
+                    "exists": metadata.exists,
+                    "isEmpty": metadata.isEmpty,
+                    "sizeBytes": metadata.sizeBytes
                 ]
             }
             return [
@@ -462,14 +543,17 @@ struct HTMLRenderer {
         guard let attachment else {
             return [
                 "exists": false,
+                "isEmpty": true,
                 "name": label,
                 "type": "",
                 "path": "",
-                "content": ""
+                "content": "",
+                "sizeBytes": 0
             ]
         }
 
         let fullPath = outputDirectory.appendingPathComponent(attachment.path).path
+        let metadata = attachmentFileMetadata(fullPath: fullPath)
         let textContent: String
         if attachment.type == .text || attachment.type == .dump {
             textContent = (try? String(contentsOfFile: fullPath, encoding: .utf8)) ?? ""
@@ -478,12 +562,23 @@ struct HTMLRenderer {
         }
 
         return [
-            "exists": true,
+            "exists": metadata.exists,
+            "isEmpty": metadata.isEmpty,
             "name": label,
             "type": attachment.type.rawValue,
             "path": attachment.path,
-            "content": textContent
+            "content": textContent,
+            "sizeBytes": metadata.sizeBytes
         ]
+    }
+
+    private func attachmentFileMetadata(fullPath: String) -> (exists: Bool, isEmpty: Bool, sizeBytes: Int64) {
+        guard fileManager.fileExists(atPath: fullPath) else {
+            return (exists: false, isEmpty: true, sizeBytes: 0)
+        }
+        let attributes = try? fileManager.attributesOfItem(atPath: fullPath)
+        let size = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+        return (exists: true, isEmpty: size == 0, sizeBytes: size)
     }
 
     private func passedGroupName(for attachment: SnapshotAttachment) -> String {
