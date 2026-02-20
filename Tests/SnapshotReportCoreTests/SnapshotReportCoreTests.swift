@@ -374,11 +374,15 @@ func htmlRendererTemplateCandidatesIncludeResolvedSymlinkPath() throws {
     try FileManager.default.createSymbolicLink(atPath: linkedExecutable.path, withDestinationPath: cellarExecutable.path)
 
     let candidates = HTMLRenderer.defaultTemplateCandidateURLs(executablePath: linkedExecutable.path).map(\.path)
-    let expected = cellarBin
+    let expectedSwiftPMLayout = cellarBin
+        .appendingPathComponent("SnapshotReportKit_SnapshotReportCore.bundle/default-report.stencil")
+        .path
+    let expectedCFBundleLayout = cellarBin
         .appendingPathComponent("SnapshotReportKit_SnapshotReportCore.bundle/Contents/Resources/default-report.stencil")
         .path
 
-    #expect(candidates.contains(expected))
+    #expect(candidates.contains(expectedSwiftPMLayout))
+    #expect(candidates.contains(expectedCFBundleLayout))
 }
 
 @Test

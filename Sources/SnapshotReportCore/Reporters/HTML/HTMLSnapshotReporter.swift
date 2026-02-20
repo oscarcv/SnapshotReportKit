@@ -108,6 +108,10 @@ struct HTMLRenderer {
             return try String(contentsOfFile: customTemplatePath, encoding: .utf8)
         }
 
+        if let moduleTemplateURL = Bundle.module.url(forResource: "default-report", withExtension: "stencil") {
+            return try String(contentsOf: moduleTemplateURL, encoding: .utf8)
+        }
+
         for candidate in Self.defaultTemplateCandidateURLs() {
             guard fileManager.fileExists(atPath: candidate.path) else { continue }
             return try String(contentsOf: candidate, encoding: .utf8)
@@ -128,7 +132,10 @@ struct HTMLRenderer {
         executablePath: String = CommandLine.arguments.first ?? ""
     ) -> [URL] {
         let bundleName = "SnapshotReportKit_SnapshotReportCore.bundle"
-        let templateRelativePath = "Contents/Resources/default-report.stencil"
+        let templateRelativePaths = [
+            "default-report.stencil",
+            "Contents/Resources/default-report.stencil",
+        ]
         var candidateDirectories: [URL] = []
 
         if executablePath.isEmpty == false {
@@ -150,17 +157,19 @@ struct HTMLRenderer {
 
         var candidates: [URL] = []
         for directory in uniqueDirectories {
-            let bundleInExecutableDirectory = directory
-                .appendingPathComponent(bundleName, isDirectory: true)
-                .appendingPathComponent(templateRelativePath)
-            candidates.append(bundleInExecutableDirectory)
+            for templateRelativePath in templateRelativePaths {
+                let bundleInExecutableDirectory = directory
+                    .appendingPathComponent(bundleName, isDirectory: true)
+                    .appendingPathComponent(templateRelativePath)
+                candidates.append(bundleInExecutableDirectory)
 
-            let bundleInLibexecDirectory = directory
-                .appendingPathComponent("..", isDirectory: true)
-                .appendingPathComponent("libexec", isDirectory: true)
-                .appendingPathComponent(bundleName, isDirectory: true)
-                .appendingPathComponent(templateRelativePath)
-            candidates.append(bundleInLibexecDirectory)
+                let bundleInLibexecDirectory = directory
+                    .appendingPathComponent("..", isDirectory: true)
+                    .appendingPathComponent("libexec", isDirectory: true)
+                    .appendingPathComponent(bundleName, isDirectory: true)
+                    .appendingPathComponent(templateRelativePath)
+                candidates.append(bundleInLibexecDirectory)
+            }
         }
 
         let sourceTemplate = URL(fileURLWithPath: #filePath)
