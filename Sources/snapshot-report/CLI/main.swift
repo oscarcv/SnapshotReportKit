@@ -23,23 +23,32 @@ struct CLI {
         try FileManager.default.createDirectory(at: options.outputDirectory, withIntermediateDirectories: true)
 
         let startedAt = Date()
+        CLIUI.debug("Output directory: \(options.outputDirectory.path)")
+        switch options.jobsMode {
+        case .auto(let totalCores):
+            CLIUI.debug("Parallel jobs auto-selected: \(options.jobs) (50% of \(totalCores) available cores)")
+        case .manual:
+            CLIUI.debug("Parallel jobs explicitly set: \(options.jobs)")
+        }
+
         CLIUI.step("Resolving input files")
         let resolvedInputs = try resolveInputs(options: options)
         CLIUI.debug("Resolved \(resolvedInputs.count) JSON inputs and \(options.xcresultInputs.count) xcresult inputs")
 
         CLIUI.step("Loading JSON reports (\(resolvedInputs.count))")
-        let reports = try _loadJSONReports(inputs: resolvedInputs, jobs: options.jobs) { completed, total, input in
-            CLIUI.progress("JSON \(completed)/\(total): \(input.lastPathComponent)")
+        let reports = try _loadJSONReports(inputs: resolvedInputs, jobs: options.jobs) { completed, total, input, summary in
+            CLIUI.progress("JSON \(completed)/\(total): \(input.lastPathComponent) -> \(formatSummary(summary))")
         }
 
         CLIUI.step("Extracting xcresult bundles (\(options.xcresultInputs.count))")
-        let xcresultReports = try _readXCResultReports(inputs: options.xcresultInputs, jobs: options.jobs) { completed, total, input in
-            CLIUI.progress("XCResult \(completed)/\(total): \(input.lastPathComponent)")
+        let xcresultReports = try _readXCResultReports(inputs: options.xcresultInputs, jobs: options.jobs) { completed, total, input, summary in
+            CLIUI.progress("XCResult \(completed)/\(total): \(input.lastPathComponent) -> \(formatSummary(summary))")
         }
 
         CLIUI.step("Merging report data")
         let mergedReport = SnapshotReportAggregator.merge(reports: reports + xcresultReports, name: options.reportName)
         CLIUI.debug("Merged report: \(mergedReport.summary.total) tests (\(mergedReport.summary.passed) passed, \(mergedReport.summary.failed) failed, \(mergedReport.summary.skipped) skipped)")
+        CLIUI.debug("Merged suites: \(mergedReport.suites.count), attachments exported: \(countAttachments(in: mergedReport))")
 
         let effectiveOdiffPath = options.odiffPath ?? _resolveOnPATH("odiff")
         let finalReport: SnapshotReport
@@ -52,6 +61,7 @@ struct CLI {
             finalReport = mergedReport
         }
 
+        CLIUI.debug("Final report summary: \(formatSummary(finalReport.summary)); attachments: \(countAttachments(in: finalReport))")
         CLIUI.step("Generating output formats (\(options.formats.count))")
         try _writeReports(
             finalReport,
@@ -59,8 +69,8 @@ struct CLI {
             outputDirectory: options.outputDirectory,
             htmlTemplate: options.htmlTemplate,
             jobs: options.jobs
-        ) { completed, total, format in
-            CLIUI.progress("Output \(completed)/\(total): \(format.rawValue)")
+        ) { completed, total, format, artifactPath in
+            CLIUI.progress("Output \(completed)/\(total): \(format.rawValue) -> \(artifactPath)")
         }
 
         let elapsed = Date().timeIntervalSince(startedAt)
@@ -77,7 +87,9 @@ struct CLI {
         var htmlTemplate: String?
         var reportName: String?
         var odiffPath: String?
-        var jobs = max(1, ProcessInfo.processInfo.activeProcessorCount)
+        let cpuCount = ProcessInfo.processInfo.activeProcessorCount
+        var jobs = defaultAutomaticJobs(processorCount: cpuCount)
+        var jobsMode: JobsMode = .auto(totalCores: cpuCount)
         var verbose = false
 
         var index = 0
@@ -131,6 +143,7 @@ struct CLI {
                     throw SnapshotReportError.invalidInput("--jobs must be a positive integer")
                 }
                 jobs = parsed
+                jobsMode = .manual
             case "--verbose", "-v":
                 verbose = true
             default:
@@ -154,8 +167,13 @@ struct CLI {
             reportName: reportName,
             odiffPath: odiffPath,
             jobs: jobs,
+            jobsMode: jobsMode,
             verbose: verbose
         )
+    }
+
+    static func defaultAutomaticJobs(processorCount: Int = ProcessInfo.processInfo.activeProcessorCount) -> Int {
+        max(1, processorCount / 2)
     }
 
     private static func resolveInputs(options: Options) throws -> [URL] {
@@ -163,18 +181,24 @@ struct CLI {
         let fileManager = FileManager.default
 
         for directory in options.inputDirectories {
-            guard fileManager.fileExists(atPath: directory.path) else { continue }
+            guard fileManager.fileExists(atPath: directory.path) else {
+                CLIUI.debug("Input directory not found, skipping: \(directory.path)")
+                continue
+            }
 
             let enumerator = fileManager.enumerator(
                 at: directory,
                 includingPropertiesForKeys: nil
             )
 
+            var discovered = 0
             while let url = enumerator?.nextObject() as? URL {
                 if url.pathExtension.lowercased() == "json" {
                     resolved.append(url)
+                    discovered += 1
                 }
             }
+            CLIUI.debug("Discovered \(discovered) JSON input file(s) in \(directory.path)")
         }
 
         guard !resolved.isEmpty || !options.xcresultInputs.isEmpty else {
@@ -202,7 +226,7 @@ struct CLI {
                   --html-template <path>  Custom stencil template for html report
                   --name <string>         Override merged report name
                   --odiff <path>          Path to odiff binary (default: auto-detect on PATH)
-                  --jobs <n>              Max parallel xcresult reads (default: CPU count)
+                  --jobs <n>              Max parallel jobs (default: 50% of CPU cores)
               -v, --verbose               Enable diagnostic output
                   --help                  Show help
             """
@@ -219,19 +243,25 @@ struct CLI {
         let reportName: String?
         let odiffPath: String?
         let jobs: Int
+        let jobsMode: JobsMode
         let verbose: Bool
+    }
+
+    enum JobsMode {
+        case auto(totalCores: Int)
+        case manual
     }
 }
 
 private func _readXCResultReports(
     inputs: [URL],
     jobs: Int,
-    progress: @escaping @Sendable (_ completed: Int, _ total: Int, _ input: URL) -> Void = { _, _, _ in }
+    progress: @escaping @Sendable (_ completed: Int, _ total: Int, _ input: URL, _ summary: SnapshotSummary) -> Void = { _, _, _, _ in }
 ) throws -> [SnapshotReport] {
     guard !inputs.isEmpty else { return [] }
     if inputs.count == 1 {
         let report = try XCResultReader().read(xcresultPath: inputs[0])
-        progress(1, 1, inputs[0])
+        progress(1, 1, inputs[0], report.summary)
         return [report]
     }
 
@@ -254,7 +284,7 @@ private func _readXCResultReports(
                 let report = try XCResultReader().read(xcresultPath: input)
                 state.setReport(report, at: index)
                 let completed = state.incrementCompleted()
-                progress(completed, inputs.count, input)
+                progress(completed, inputs.count, input, report.summary)
             } catch {
                 state.setFirstErrorIfNeeded(error)
             }
@@ -311,12 +341,12 @@ private final class XCResultReadState: @unchecked Sendable {
 private func _loadJSONReports(
     inputs: [URL],
     jobs: Int,
-    progress: @escaping @Sendable (_ completed: Int, _ total: Int, _ input: URL) -> Void = { _, _, _ in }
+    progress: @escaping @Sendable (_ completed: Int, _ total: Int, _ input: URL, _ summary: SnapshotSummary) -> Void = { _, _, _, _ in }
 ) throws -> [SnapshotReport] {
     guard !inputs.isEmpty else { return [] }
     if inputs.count == 1 {
         let report = try SnapshotReportIO.loadReport(from: inputs[0])
-        progress(1, 1, inputs[0])
+        progress(1, 1, inputs[0], report.summary)
         return [report]
     }
 
@@ -339,7 +369,7 @@ private func _loadJSONReports(
                 let report = try SnapshotReportIO.loadReport(from: input)
                 state.setReport(report, at: index)
                 let completed = state.incrementCompleted()
-                progress(completed, inputs.count, input)
+                progress(completed, inputs.count, input, report.summary)
             } catch {
                 state.setFirstErrorIfNeeded(error)
             }
@@ -357,7 +387,7 @@ private func _writeReports(
     outputDirectory: URL,
     htmlTemplate: String?,
     jobs: Int,
-    progress: @escaping @Sendable (_ completed: Int, _ total: Int, _ format: OutputFormat) -> Void = { _, _, _ in }
+    progress: @escaping @Sendable (_ completed: Int, _ total: Int, _ format: OutputFormat, _ artifactPath: String) -> Void = { _, _, _, _ in }
 ) throws {
     if formats.count == 1 {
         let format = formats[0]
@@ -366,7 +396,7 @@ private func _writeReports(
             format: format,
             options: .init(outputDirectory: outputDirectory, htmlTemplatePath: htmlTemplate)
         )
-        progress(1, 1, format)
+        progress(1, 1, format, reportOutputPath(for: format, outputDirectory: outputDirectory))
         return
     }
 
@@ -391,7 +421,7 @@ private func _writeReports(
                     options: .init(outputDirectory: outputDirectory, htmlTemplatePath: htmlTemplate)
                 )
                 let completed = state.incrementCompleted()
-                progress(completed, formats.count, format)
+                progress(completed, formats.count, format, reportOutputPath(for: format, outputDirectory: outputDirectory))
             } catch {
                 state.setFirstErrorIfNeeded(error)
             }
@@ -401,6 +431,29 @@ private func _writeReports(
     group.wait()
     if let firstError = state.firstError() {
         throw firstError
+    }
+}
+
+private func reportOutputPath(for format: OutputFormat, outputDirectory: URL) -> String {
+    switch format {
+    case .json:
+        return outputDirectory.appendingPathComponent("report.json").path
+    case .junit:
+        return outputDirectory.appendingPathComponent("report.junit.xml").path
+    case .html:
+        return outputDirectory.appendingPathComponent("html/index.html").path
+    }
+}
+
+private func formatSummary(_ summary: SnapshotSummary) -> String {
+    "\(summary.total) tests (\(summary.passed) passed, \(summary.failed) failed, \(summary.skipped) skipped)"
+}
+
+private func countAttachments(in report: SnapshotReport) -> Int {
+    report.suites.reduce(into: 0) { total, suite in
+        total += suite.tests.reduce(into: 0) { testTotal, test in
+            testTotal += test.attachments.count
+        }
     }
 }
 
