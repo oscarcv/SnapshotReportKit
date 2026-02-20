@@ -67,3 +67,32 @@ func verboseFlagAndDiagnosticLogs() throws {
         "[snapshot-report] success: Generated report html at /tmp/output",
     ])
 }
+
+@Test
+func defaultAutomaticJobsUsesHalfProcessorCount() {
+    #expect(CLI.defaultAutomaticJobs(processorCount: 1) == 1)
+    #expect(CLI.defaultAutomaticJobs(processorCount: 2) == 1)
+    #expect(CLI.defaultAutomaticJobs(processorCount: 7) == 3)
+    #expect(CLI.defaultAutomaticJobs(processorCount: 8) == 4)
+}
+
+@Test
+func parseJobsModeDefaultsToAutoAndSupportsOverride() throws {
+    let autoOptions = try CLI.parse(arguments: ["--input", "/tmp/report.json"])
+    switch autoOptions.jobsMode {
+    case .auto(let totalCores):
+        #expect(totalCores >= 1)
+        #expect(autoOptions.jobs == CLI.defaultAutomaticJobs(processorCount: totalCores))
+    case .manual:
+        Issue.record("Expected auto jobs mode when --jobs is not provided")
+    }
+
+    let manualOptions = try CLI.parse(arguments: ["--input", "/tmp/report.json", "--jobs", "4"])
+    #expect(manualOptions.jobs == 4)
+    switch manualOptions.jobsMode {
+    case .auto:
+        Issue.record("Expected manual jobs mode when --jobs is provided")
+    case .manual:
+        break
+    }
+}
