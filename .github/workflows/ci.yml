@@ -37,7 +37,7 @@ jobs:
         run: swift build --build-tests
 
       - name: Run tests
-        run: swift test --parallel
+        run: swift test
 
       - name: CLI smoke test
         run: swift run snapshot-report --help
