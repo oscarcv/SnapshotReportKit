@@ -16,20 +16,33 @@ permissions:
 jobs:
   analyze:
     name: Analyze (Swift)
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 60
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "latest-stable"
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
           languages: swift
 
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
+      - name: Build for CodeQL
+        run: |
+          swift package resolve
+          swift build --build-tests
+          swift build --package-path examples/lib
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
