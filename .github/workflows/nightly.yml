@@ -46,7 +46,9 @@ jobs:
           mkdir -p "dist/${ROOT}"
 
           BIN=".build/${ARCH}-apple-macosx/release/snapshot-report"
+          BUNDLE=".build/${ARCH}-apple-macosx/release/SnapshotReportKit_SnapshotReportCore.bundle"
           cp "${BIN}" "dist/${ROOT}/snapshot-report"
+          cp -R "${BUNDLE}" "dist/${ROOT}/SnapshotReportKit_SnapshotReportCore.bundle"
           chmod +x "dist/${ROOT}/snapshot-report"
 
           tar -C dist -czf "dist/${ROOT}.tar.gz" "${ROOT}"
@@ -160,6 +162,7 @@ jobs:
 
             def install
               bin.install "snapshot-report" => "snapshot-report-nightly"
+              bin.install "SnapshotReportKit_SnapshotReportCore.bundle"
             end
 
             test do

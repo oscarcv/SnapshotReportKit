@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   build-and-test:
@@ -37,7 +37,52 @@ jobs:
         run: swift build --build-tests
 
       - name: Run tests
-        run: swift test --parallel
+        run: |
+          set -euo pipefail
+          LOG_FILE="$(mktemp -t xctest-log.XXXXXX.log)"
+          TEST_BUNDLE="$(find .build -type d -name 'SnapshotReportKitPackageTests.xctest' | head -n 1)"
+          if [ -z "${TEST_BUNDLE}" ]; then
+            echo "[ci] ERROR: test bundle not found under .build"
+            find .build -maxdepth 4 -type d -name '*.xctest' -print || true
+            exit 1
+          fi
+
+          echo "Running xctest bundle: ${TEST_BUNDLE}"
+          echo "Logs: ${LOG_FILE}"
+
+          xcrun xctest "${TEST_BUNDLE}" >"${LOG_FILE}" 2>&1 &
+          TEST_PID=$!
+          START_TS=$(date +%s)
+          TIMEOUT_SECONDS=$((10 * 60))
+
+          while kill -0 "${TEST_PID}" 2>/dev/null; do
+            NOW_TS=$(date +%s)
+            ELAPSED=$((NOW_TS - START_TS))
+            echo "[ci] xctest still running (${ELAPSED}s elapsed)"
+            ps -p "${TEST_PID}" -o pid=,ppid=,%cpu=,%mem=,etime=,command= || true
+            echo "===== xctest log (tail -n 40) ====="
+            tail -n 40 "${LOG_FILE}" || true
+
+            if [ "${ELAPSED}" -ge "${TIMEOUT_SECONDS}" ]; then
+              echo "[ci] ERROR: xctest exceeded timeout (${TIMEOUT_SECONDS}s)"
+              kill -TERM "${TEST_PID}" 2>/dev/null || true
+              sleep 5
+              kill -KILL "${TEST_PID}" 2>/dev/null || true
+              echo "===== xctest log (tail) ====="
+              tail -n 200 "${LOG_FILE}" || true
+              exit 124
+            fi
+
+            sleep 30
+          done
+
+          set +e
+          wait "${TEST_PID}"
+          STATUS=$?
+          set -e
+          echo "===== xctest log (tail) ====="
+          tail -n 200 "${LOG_FILE}" || true
+          exit "${STATUS}"
 
       - name: CLI smoke test
         run: swift run snapshot-report --help
