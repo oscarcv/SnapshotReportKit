@@ -251,6 +251,14 @@ public func assertSnapshot(
             missingReferencePolicy: resolvedMissingReferencePolicy,
             attachSuccessfulSnapshots: true,
             imageDiffing: diffing,
+            manifestContext: .init(
+                snapshotName: snapshotName.isEmpty ? _normalize(testName: testName) : snapshotName,
+                device: resolvedDevice.rawValue,
+                configuredOSMajorVersion: resolvedConfiguredOSMajorVersion,
+                captureHeight: String(describing: resolvedCaptureHeight),
+                appearance: appearance.rawValue,
+                highContrast: appearance == .highContrastLight || appearance == .highContrastDark
+            ),
             referenceURL: referenceURL,
             file: file,
             testName: testName,
@@ -379,6 +387,7 @@ private func _assertReportingSnapshot<Value, Format>(
     missingReferencePolicy: MissingReferencePolicy,
     attachSuccessfulSnapshots: Bool,
     imageDiffing: (any SnapshotImageDiffing)? = nil,
+    manifestContext: SnapshotAssertionManifestContext? = nil,
     referenceURL: String? = nil,
     file: StaticString,
     testName: String,
@@ -429,6 +438,8 @@ private func _assertReportingSnapshot<Value, Format>(
     }
 
     var attachments: [SnapshotAttachment] = []
+    var referencePathForAttachment: String?
+    var actualPathForAttachment: String?
 
     if let snapshotFileURL = _inferredSnapshotFileURL(
         file: file,
@@ -436,30 +447,49 @@ private func _assertReportingSnapshot<Value, Format>(
         named: named,
         pathExtension: snapshotting.pathExtension
     ), FileManager.default.fileExists(atPath: snapshotFileURL.path) {
+        referencePathForAttachment = snapshotFileURL.path
+
+        if let normalizedFailure,
+           let extracted = _extractReferenceAndFailureURLs(from: normalizedFailure) {
+            if let extractedReference = extracted.referencePath {
+                referencePathForAttachment = extractedReference
+            }
+            if let extractedFailure = extracted.failurePath {
+                actualPathForAttachment = extractedFailure
+            }
+        }
+
         if attachSuccessfulSnapshots || normalizedFailure != nil {
             attachments.append(
                 SnapshotAttachment(
                     name: "Snapshot",
                     type: _attachmentType(for: snapshotFileURL.pathExtension),
-                    path: snapshotFileURL.path
+                    path: referencePathForAttachment ?? snapshotFileURL.path
                 )
             )
         }
 
         #if canImport(UIKit)
         if let imageSnapshotting = snapshotting as? Snapshotting<Value, UIImage>,
-           let normalizedFailure,
-           let actual = _materializeSnapshot(value: evaluated, snapshotting: imageSnapshotting, timeout: timeout),
-           let actualData = actual.pngData() {
-            // Always store the actual image so CLI odiff post-processing can use it.
-            let actualURL = URL(fileURLWithPath: NSTemporaryDirectory())
-                .appendingPathComponent("snapshot-actual-\(UUID().uuidString).png")
-            try? actualData.write(to: actualURL)
-            attachments.append(SnapshotAttachment(name: "Actual Snapshot", type: .png, path: actualURL.path))
+           let normalizedFailure {
+            if let actualPathForAttachment {
+                attachments.append(SnapshotAttachment(name: "Actual Snapshot", type: .png, path: actualPathForAttachment))
+            } else if let actual = _materializeSnapshot(value: evaluated, snapshotting: imageSnapshotting, timeout: timeout),
+                      let actualData = actual.pngData() {
+                // Fallback only if SnapshotTesting failure output cannot be parsed.
+                let actualURL = URL(fileURLWithPath: NSTemporaryDirectory())
+                    .appendingPathComponent("snapshot-actual-\(UUID().uuidString).png")
+                try? actualData.write(to: actualURL)
+                actualPathForAttachment = actualURL.path
+                attachments.append(SnapshotAttachment(name: "Actual Snapshot", type: .png, path: actualURL.path))
+            }
 
             // CoreImage diff (only when a diffing strategy is provided).
             if let imageDiffing,
-               let reference = UIImage(contentsOfFile: snapshotFileURL.path),
+               let referencePath = referencePathForAttachment,
+               let actualPath = actualPathForAttachment,
+               let reference = UIImage(contentsOfFile: referencePath),
+               let actual = UIImage(contentsOfFile: actualPath),
                let diffImage = imageDiffing.makeDiff(reference: reference, actual: actual),
                let diffData = diffImage.pngData() {
                 let diffURL = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -488,6 +518,19 @@ private func _assertReportingSnapshot<Value, Format>(
         #endif
     }
 
+    let assertID = UUID().uuidString
+    let manifest = _buildManifest(
+        assertID: assertID,
+        suiteName: suiteName,
+        className: className,
+        testName: normalizedTestName,
+        named: named,
+        status: normalizedFailure == nil ? "passed" : "failed",
+        manifestContext: manifestContext,
+        referenceURL: referenceURL
+    )
+    _emitXCResultAttachments(assertID: assertID, manifest: manifest, attachments: attachments)
+
     let duration = Date().timeIntervalSince(start)
     Task {
         await SnapshotReportRuntime.shared.installObserverIfNeeded()
@@ -507,6 +550,74 @@ private func _assertReportingSnapshot<Value, Format>(
 
 private func _normalize(testName: String) -> String {
     testName.replacingOccurrences(of: "()", with: "")
+}
+
+private struct SnapshotAssertionManifestContext: Sendable {
+    let snapshotName: String
+    let device: String?
+    let configuredOSMajorVersion: Int?
+    let captureHeight: String?
+    let appearance: String?
+    let highContrast: Bool?
+}
+
+private func _buildManifest(
+    assertID: String,
+    suiteName: String,
+    className: String,
+    testName: String,
+    named: String?,
+    status: String,
+    manifestContext: SnapshotAssertionManifestContext?,
+    referenceURL: String?
+) -> SnapshotAssertionManifest {
+    let runtime = ProcessInfo.processInfo.operatingSystemVersion
+    let runtimeVersion = "\(runtime.majorVersion).\(runtime.minorVersion).\(runtime.patchVersion)"
+    let snapshotName = manifestContext?.snapshotName ?? named ?? testName
+
+    return SnapshotAssertionManifest(
+        assertID: assertID,
+        suiteName: suiteName,
+        className: className,
+        testName: testName,
+        snapshotName: snapshotName,
+        status: status,
+        device: manifestContext?.device,
+        configuredOSMajorVersion: manifestContext?.configuredOSMajorVersion,
+        runtimeOSVersion: runtimeVersion,
+        captureHeight: manifestContext?.captureHeight,
+        appearance: manifestContext?.appearance,
+        highContrast: manifestContext?.highContrast,
+        referenceURL: referenceURL
+    )
+}
+
+private func _emitXCResultAttachments(
+    assertID: String,
+    manifest: SnapshotAssertionManifest,
+    attachments: [SnapshotAttachment]
+) {
+    Task { @MainActor in
+        for attachment in attachments where attachment.type == .png {
+            let kind: XCTSnapshotAttachmentKind
+            switch attachment.name.lowercased() {
+            case "snapshot":
+                kind = .snapshot
+            case "actual snapshot":
+                kind = .failure
+            default:
+                kind = attachment.name.lowercased().contains("diff") ? .diff : .snapshot
+            }
+
+            XCTSnapshotAttachmentBuilder.addPNGAttachment(
+                filePath: attachment.path,
+                assertID: assertID,
+                kind: kind,
+                label: manifest.snapshotName
+            )
+        }
+        XCTSnapshotAttachmentBuilder.addManifestAttachment(manifest)
+    }
 }
 
 private func _sanitizePathComponent(_ value: String) -> String {
@@ -598,6 +709,22 @@ private func _writeTextAttachment(contents: String) -> String {
         .appendingPathComponent("snapshot-text-\(UUID().uuidString).txt")
     try? contents.data(using: .utf8)?.write(to: url)
     return url.path
+}
+
+private func _extractReferenceAndFailureURLs(from failureMessage: String) -> (referencePath: String?, failurePath: String?)? {
+    guard let regex = try? NSRegularExpression(pattern: #""(file://[^"]+)""#) else { return nil }
+    let nsRange = NSRange(location: 0, length: failureMessage.utf16.count)
+    let matches = regex.matches(in: failureMessage, options: [], range: nsRange)
+    guard !matches.isEmpty else { return nil }
+
+    let urls: [URL] = matches.compactMap { match in
+        guard match.numberOfRanges > 1,
+              let range = Range(match.range(at: 1), in: failureMessage) else { return nil }
+        return URL(string: String(failureMessage[range]))
+    }
+
+    guard !urls.isEmpty else { return nil }
+    return (urls.first?.path, urls.dropFirst().first?.path)
 }
 
 private func _recordFrameworkIssue(_ message: String, file: StaticString, line: UInt) {

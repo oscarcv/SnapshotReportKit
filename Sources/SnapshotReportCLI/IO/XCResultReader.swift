@@ -140,8 +140,28 @@ public struct XCResultReader: Sendable {
             }
 
             let activitySummaries = arrayValues(from: detailsNode, key: "activitySummaries")
+            var manifests: [SnapshotAssertionManifestRecord] = []
             if !activitySummaries.isEmpty {
-                attachments = exportAttachments(in: activitySummaries, xcresultPath: xcresultPath)
+                let exported = exportAttachments(in: activitySummaries, xcresultPath: xcresultPath)
+                attachments = exported.compactMap(\.attachment)
+                manifests = exported.compactMap(\.manifest)
+            }
+
+            if !manifests.isEmpty {
+                if let snapshotName = manifests.compactMap(\.snapshotName).first, !snapshotName.isEmpty {
+                    attachments = attachments.map { attachment in
+                        if attachment.name == "Snapshot" {
+                            return SnapshotAttachment(name: "Snapshot-\(snapshotName)", type: attachment.type, path: attachment.path)
+                        }
+                        if attachment.name == "Diff" {
+                            return SnapshotAttachment(name: "Diff-\(snapshotName)", type: attachment.type, path: attachment.path)
+                        }
+                        if attachment.name == "Failure" || attachment.name == "Actual Snapshot" {
+                            return SnapshotAttachment(name: "Failure-\(snapshotName)", type: attachment.type, path: attachment.path)
+                        }
+                        return attachment
+                    }
+                }
             }
 
             if status == .passed, attachments.isEmpty {
@@ -231,8 +251,29 @@ public struct XCResultReader: Sendable {
         return nil
     }
 
-    private func exportAttachments(in activitySummaries: [[String: Any]], xcresultPath: URL) -> [SnapshotAttachment] {
-        var exported: [SnapshotAttachment] = []
+    private struct ExportedAttachmentPayload {
+        let attachment: SnapshotAttachment?
+        let manifest: SnapshotAssertionManifestRecord?
+    }
+
+    private struct SnapshotAssertionManifestRecord: Decodable {
+        let schemaVersion: Int?
+        let assertID: String?
+        let snapshotName: String?
+        let device: String?
+        let runtimeOSVersion: String?
+        let appearance: String?
+        let highContrast: Bool?
+    }
+
+    private struct StandardizedAttachmentName {
+        let assertID: String
+        let kind: String
+        let label: String
+    }
+
+    private func exportAttachments(in activitySummaries: [[String: Any]], xcresultPath: URL) -> [ExportedAttachmentPayload] {
+        var exported: [ExportedAttachmentPayload] = []
 
         for activity in activitySummaries {
             let activityAttachments = arrayValues(from: activity, key: "attachments")
@@ -240,7 +281,6 @@ public struct XCResultReader: Sendable {
             for att in activityAttachments {
                 guard
                     let uniformTypeID = value(from: att, key: "uniformTypeIdentifier"),
-                    uniformTypeID == "public.png",
                     let payloadRef = att["payloadRef"] as? [String: Any],
                     let payloadID = value(from: payloadRef, key: "id")
                 else { continue }
@@ -257,19 +297,46 @@ public struct XCResultReader: Sendable {
                         "--output-path", destURL.path,
                         "--path", xcresultPath.path
                     ])
-                    let rawName = (value(from: att, key: "name") ?? "Attachment").lowercased()
-                    let mappedName: String
-                    switch rawName {
-                    case "reference":
-                        mappedName = "Snapshot"
-                    case "failure":
-                        mappedName = "Actual Snapshot"
-                    case "difference":
-                        mappedName = "Diff"
-                    default:
-                        mappedName = value(from: att, key: "name") ?? "Attachment"
+                    let rawName = value(from: att, key: "name") ?? "Attachment"
+                    let standardized = parseStandardizedAttachmentName(rawName)
+
+                    if uniformTypeID == "public.json",
+                       standardized?.kind == "manifest",
+                       let data = try? Data(contentsOf: destURL),
+                       let manifest = try? JSONDecoder().decode(SnapshotAssertionManifestRecord.self, from: data) {
+                        exported.append(.init(attachment: nil, manifest: manifest))
+                        continue
                     }
-                    exported.append(SnapshotAttachment(name: mappedName, type: .png, path: destURL.path))
+
+                    guard uniformTypeID == "public.png" else { continue }
+                    let mappedName: String
+                    if let standardized {
+                        switch standardized.kind {
+                        case "snapshot":
+                            mappedName = standardized.label.isEmpty ? "Snapshot" : "Snapshot-\(standardized.label)"
+                        case "failure":
+                            mappedName = standardized.label.isEmpty ? "Failure" : "Failure-\(standardized.label)"
+                        case "diff":
+                            mappedName = standardized.label.isEmpty ? "Diff" : "Diff-\(standardized.label)"
+                        default:
+                            mappedName = rawName
+                        }
+                    } else {
+                        switch rawName.lowercased() {
+                        case "reference":
+                            mappedName = "Snapshot"
+                        case "failure":
+                            mappedName = "Actual Snapshot"
+                        case "difference":
+                            mappedName = "Diff"
+                        default:
+                            mappedName = rawName
+                        }
+                    }
+                    exported.append(.init(
+                        attachment: SnapshotAttachment(name: mappedName, type: .png, path: destURL.path),
+                        manifest: nil
+                    ))
                 } catch {
                     continue
                 }
@@ -277,6 +344,18 @@ public struct XCResultReader: Sendable {
         }
         return exported
     }
+
+    private func parseStandardizedAttachmentName(_ raw: String) -> StandardizedAttachmentName? {
+        let parts = raw.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count == 4, parts[0] == "SnapshotReport" else { return nil }
+        return StandardizedAttachmentName(
+            assertID: parts[1],
+            kind: parts[2],
+            label: parts[3]
+        )
+    }
+
+    
 
     private func mapStatus(_ xcStatus: String) -> SnapshotStatus {
         switch xcStatus.lowercased() {

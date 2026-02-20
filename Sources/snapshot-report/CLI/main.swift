@@ -22,7 +22,7 @@ struct CLI {
 
         let resolvedInputs = try resolveInputs(options: options)
         let reports = try resolvedInputs.map(SnapshotReportIO.loadReport)
-        let xcresultReports = try options.xcresultInputs.map { try XCResultReader().read(xcresultPath: $0) }
+        let xcresultReports = try _readXCResultReports(inputs: options.xcresultInputs, jobs: options.jobs)
         let mergedReport = SnapshotReportAggregator.merge(reports: reports + xcresultReports, name: options.reportName)
 
         let effectiveOdiffPath = options.odiffPath ?? _resolveOnPATH("odiff")
@@ -49,6 +49,7 @@ struct CLI {
         var htmlTemplate: String?
         var reportName: String?
         var odiffPath: String?
+        var jobs = max(1, ProcessInfo.processInfo.activeProcessorCount)
 
         var index = 0
         while index < arguments.count {
@@ -94,6 +95,13 @@ struct CLI {
                 index += 1
                 guard index < arguments.count else { throw SnapshotReportError.invalidInput("Missing value for --odiff") }
                 odiffPath = arguments[index]
+            case "--jobs":
+                index += 1
+                guard index < arguments.count else { throw SnapshotReportError.invalidInput("Missing value for --jobs") }
+                guard let parsed = Int(arguments[index]), parsed > 0 else {
+                    throw SnapshotReportError.invalidInput("--jobs must be a positive integer")
+                }
+                jobs = parsed
             default:
                 throw SnapshotReportError.invalidInput("Unknown argument: \(argument)")
             }
@@ -113,7 +121,8 @@ struct CLI {
             outputDirectory: outputDirectory,
             htmlTemplate: htmlTemplate,
             reportName: reportName,
-            odiffPath: odiffPath
+            odiffPath: odiffPath,
+            jobs: jobs
         )
     }
 
@@ -161,6 +170,7 @@ struct CLI {
                   --html-template <path>  Custom stencil template for html report
                   --name <string>         Override merged report name
                   --odiff <path>          Path to odiff binary (default: auto-detect on PATH)
+                  --jobs <n>              Max parallel xcresult reads (default: CPU count)
                   --help                  Show help
             """
         )
@@ -175,6 +185,73 @@ struct CLI {
         let htmlTemplate: String?
         let reportName: String?
         let odiffPath: String?
+        let jobs: Int
+    }
+}
+
+private func _readXCResultReports(inputs: [URL], jobs: Int) throws -> [SnapshotReport] {
+    guard !inputs.isEmpty else { return [] }
+    if inputs.count == 1 { return [try XCResultReader().read(xcresultPath: inputs[0])] }
+
+    let workerCount = max(1, min(jobs, inputs.count))
+    let queue = DispatchQueue(label: "snapshot-report.xcresult.queue", attributes: .concurrent)
+    let semaphore = DispatchSemaphore(value: workerCount)
+    let state = XCResultReadState()
+    let group = DispatchGroup()
+
+    for (index, input) in inputs.enumerated() {
+        group.enter()
+        semaphore.wait()
+        queue.async {
+            defer {
+                semaphore.signal()
+                group.leave()
+            }
+
+            do {
+                let report = try XCResultReader().read(xcresultPath: input)
+                state.setReport(report, at: index)
+            } catch {
+                state.setFirstErrorIfNeeded(error)
+            }
+        }
+    }
+
+    group.wait()
+    if let firstError = state.firstError() { throw firstError }
+
+    return inputs.indices.compactMap { state.report(at: $0) }
+}
+
+private final class XCResultReadState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var reportsByIndex: [Int: SnapshotReport] = [:]
+    private var storedError: Error?
+
+    func setReport(_ report: SnapshotReport, at index: Int) {
+        lock.lock()
+        reportsByIndex[index] = report
+        lock.unlock()
+    }
+
+    func report(at index: Int) -> SnapshotReport? {
+        lock.lock()
+        defer { lock.unlock() }
+        return reportsByIndex[index]
+    }
+
+    func setFirstErrorIfNeeded(_ error: Error) {
+        lock.lock()
+        if storedError == nil {
+            storedError = error
+        }
+        lock.unlock()
+    }
+
+    func firstError() -> Error? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedError
     }
 }
 

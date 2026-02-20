@@ -269,6 +269,12 @@ struct HTMLRenderer {
     }
 
     private func failedAttachmentGroupKey(for attachment: SnapshotAttachment) -> String? {
+        let rawName = attachment.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let standardizedPrefixes = ["Snapshot-", "Diff-", "Failure-", "Actual Snapshot-"]
+        for prefix in standardizedPrefixes where rawName.hasPrefix(prefix) {
+            return String(rawName.dropFirst(prefix.count))
+        }
+
         let filename = URL(fileURLWithPath: attachment.path).lastPathComponent
         let patterns = [
             #"(?:reference|failure|difference)_\d+_([A-F0-9-]+)\.(?:png|jpg|jpeg)$"#,
@@ -316,7 +322,10 @@ struct HTMLRenderer {
     }
 
     private func passedGroupName(for attachment: SnapshotAttachment) -> String {
-        let candidate = attachment.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        var candidate = attachment.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if candidate.hasPrefix("Snapshot-") {
+            candidate = String(candidate.dropFirst("Snapshot-".count))
+        }
         let suffixes = [
             "-high-contrast-light",
             "-high-contrast-dark",
