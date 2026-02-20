@@ -9,6 +9,7 @@ It provides:
 - JSON report output.
 - JUnit XML output with attachment entries.
 - HTML output (stitch-inspired look) with pass/fail/skip status and attachment preview.
+- HTML layout groups assertions by snapshot name (for both passed and failed tests).
 - Aggregation of multiple test runs into one report.
 - Custom HTML template support via Stencil.
 - Reporter protocol architecture (`SnapshotReporter`) with one implementation per format.
@@ -20,6 +21,7 @@ It provides:
 - Advanced image diff attachments on failures (CoreImage).
 - Per-run output directory support for test plan/package aggregation (`SNAPSHOT_REPORT_OUTPUT_DIR`, `--input-dir`).
 - **xcresult input** — ingest `.xcresult` bundles from `xcodebuild test` directly (`--xcresult`).
+- **Pass snapshot catalog from xcresult** — when passed tests have no xcresult image attachments, local `__Snapshots__` references are attached automatically for HTML catalog review.
 - **odiff integration** — SIMD-accelerated pixel diff images via the [`odiff`](https://github.com/dmtrKovalenko/odiff) binary, run automatically after merge (`--odiff`).
 - **Design reference links** — optional `referenceURL` per test case, rendered as a button in the HTML report (Zeplin, Figma, or any URL).
 - **Xcode project inspection** — `inspect` subcommand to detect snapshot targets and generate CI configuration.
@@ -46,6 +48,22 @@ Protocol:
 swift build
 ```
 
+## Project Automation
+
+GitHub Actions workflows included in this repository:
+
+- `CI` (`.github/workflows/ci.yml`): build, test, and CLI smoke test on push/PR.
+- `Dependency Review` (`.github/workflows/dependency-review.yml`): blocks risky dependency changes in PRs.
+- `CodeQL` (`.github/workflows/codeql.yml`): static security analysis for Swift on push/PR + weekly schedule.
+
+Repository best-practice files included:
+
+- `CONTRIBUTING.md`
+- `SECURITY.md`
+- `.github/pull_request_template.md`
+- `.github/ISSUE_TEMPLATE/*`
+- `.github/dependabot.yml`
+
 ## Examples
 
 Examples are isolated from the package source under:
@@ -58,6 +76,12 @@ Generate the app project:
 ```bash
 cd examples/app
 ./Scripts/generate_project.sh
+```
+
+Run the full example pass flow (explicit xcresult paths + report generation):
+
+```bash
+./Scripts/run_pass_report.sh
 ```
 
 ## CLI Usage
@@ -84,7 +108,7 @@ swift run snapshot-report \
 
 ### Ingest an xcresult bundle directly
 
-No custom assertion layer needed — point at the `.xcresult` produced by `xcodebuild test`:
+No custom assertion layer needed — point at the `.xcresult` produced by `xcodebuild test`. Use `-resultBundlePath` to avoid any DerivedData lookup:
 
 ```bash
 xcodebuild test \
@@ -98,6 +122,12 @@ swift run snapshot-report \
   --format json,junit,html \
   --output .artifacts/report
 ```
+
+### HTML report grouping behavior
+
+- Failed tests: grouped by assertion/snapshot name with horizontal order `Snapshot - Diff - Failure`.
+- Passed tests: grouped by assertion/snapshot name and rendered as horizontal variant rows.
+- Image sizing: report CSS caps display width to `320px` and preserves aspect ratio.
 
 Mix JSON runs and xcresult bundles freely:
 
@@ -421,6 +451,18 @@ swift run snapshot-report \
   --format json,junit,html
 ```
 
+```bash
+# Pass snapshot catalog from multiple xcresult bundles
+swift run snapshot-report \
+  --xcresult .artifacts/xcresult/UIKitSnapshots-pass.xcresult \
+  --xcresult .artifacts/xcresult/SwiftUISnapshots-pass.xcresult \
+  --output .artifacts/review-report-pass \
+  --format json,html \
+  --name "UIKit + SwiftUI Snapshot Catalog"
+```
+
+When pass attachments are missing in xcresult, the CLI attempts to resolve matching references from local `__Snapshots__/` folders and includes them in the report.
+
 ## HTML Template Customization (Stencil)
 
 Default template is bundled at:
@@ -438,6 +480,8 @@ You can override with `--html-template` and use these context keys:
 - `test.referenceURL` — design reference URL (empty string if not set)
 - `test.failure.message|file|line|diff`
 - `test.attachments[].name|type|path|content`
+- `test.failedGroups[]` — grouped failed entries with `groupName`, `snapshot`, `diff`, `failure`
+- `test.passedGroups[]` — grouped passed entries with `groupName`, `attachments[]`
 
 Attachment names produced automatically by the assertion layer:
 
