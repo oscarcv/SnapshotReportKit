@@ -354,3 +354,35 @@ func htmlReporterRendersFailedDetailsWithSnapshotDiffFailureOrder() throws {
         return
     }
 }
+
+@Test
+func htmlRendererTemplateCandidatesIncludeResolvedSymlinkPath() throws {
+    let temporaryRoot = FileManager.default.temporaryDirectory
+        .appendingPathComponent("SnapshotReportCoreTests-template-candidates-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+    let cellarBin = temporaryRoot
+        .appendingPathComponent("Cellar/snapshot-report-nightly/0.1.0/bin", isDirectory: true)
+    try FileManager.default.createDirectory(at: cellarBin, withIntermediateDirectories: true)
+
+    let cellarExecutable = cellarBin.appendingPathComponent("snapshot-report-nightly")
+    try Data().write(to: cellarExecutable)
+
+    let linkedBin = temporaryRoot.appendingPathComponent("bin", isDirectory: true)
+    try FileManager.default.createDirectory(at: linkedBin, withIntermediateDirectories: true)
+    let linkedExecutable = linkedBin.appendingPathComponent("snapshot-report-nightly")
+    try FileManager.default.createSymbolicLink(atPath: linkedExecutable.path, withDestinationPath: cellarExecutable.path)
+
+    let candidates = HTMLRenderer.defaultTemplateCandidateURLs(executablePath: linkedExecutable.path).map(\.path)
+    let expected = cellarBin
+        .appendingPathComponent("SnapshotReportKit_SnapshotReportCore.bundle/Contents/Resources/default-report.stencil")
+        .path
+
+    #expect(candidates.contains(expected))
+}
+
+@Test
+func htmlRendererTemplateCandidatesIncludeSourceFallback() {
+    let candidates = HTMLRenderer.defaultTemplateCandidateURLs(executablePath: "/tmp/snapshot-report").map(\.path)
+    #expect(candidates.contains { $0.hasSuffix("/Sources/SnapshotReportCore/Resources/default-report.stencil") })
+}
