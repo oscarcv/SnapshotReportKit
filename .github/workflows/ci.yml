@@ -37,7 +37,39 @@ jobs:
         run: swift build --build-tests
 
       - name: Run tests
-        run: swift test
+        run: |
+          set -euo pipefail
+          LOG_FILE="$(mktemp -t swift-test-log.XXXXXX)"
+          echo "Running swift test (logs: ${LOG_FILE})"
+
+          swift test --verbose >"${LOG_FILE}" 2>&1 &
+          TEST_PID=$!
+          START_TS=$(date +%s)
+          TIMEOUT_SECONDS=$((20 * 60))
+
+          while kill -0 "${TEST_PID}" 2>/dev/null; do
+            NOW_TS=$(date +%s)
+            ELAPSED=$((NOW_TS - START_TS))
+            echo "[ci] swift test still running (${ELAPSED}s elapsed)"
+
+            if [ "${ELAPSED}" -ge "${TIMEOUT_SECONDS}" ]; then
+              echo "[ci] ERROR: swift test exceeded timeout (${TIMEOUT_SECONDS}s)"
+              kill -TERM "${TEST_PID}" 2>/dev/null || true
+              sleep 5
+              kill -KILL "${TEST_PID}" 2>/dev/null || true
+              echo "===== swift test log (tail) ====="
+              tail -n 200 "${LOG_FILE}" || true
+              exit 124
+            fi
+
+            sleep 30
+          done
+
+          wait "${TEST_PID}"
+          STATUS=$?
+          echo "===== swift test log (tail) ====="
+          tail -n 200 "${LOG_FILE}" || true
+          exit "${STATUS}"
 
       - name: CLI smoke test
         run: swift run snapshot-report --help
