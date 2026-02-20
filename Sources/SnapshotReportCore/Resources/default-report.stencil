@@ -177,7 +177,8 @@
       gap: 0.5rem;
     }
 
-    .attachments.passed-variants {
+    .attachments.passed-variants,
+    .attachments.failed-variants {
       display: flex;
       flex-wrap: nowrap;
       overflow-x: auto;
@@ -192,9 +193,79 @@
       padding: 0.5rem;
     }
 
-    .attachments.passed-variants .attachment {
-      min-width: 260px;
-      flex: 0 0 260px;
+    .attachments.passed-variants .attachment,
+    .attachments.failed-variants .attachment {
+      min-width: 240px;
+      flex: 1 1 clamp(240px, 28vw, 420px);
+    }
+
+    .details-cell {
+      background: #0f1821;
+      border-top: none;
+      padding-top: 0.25rem;
+      padding-bottom: 0.8rem;
+    }
+
+    details.failure-details {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #0e171f;
+      padding: 0.5rem;
+    }
+
+    details.failure-details > summary {
+      cursor: pointer;
+      font-size: 0.8rem;
+      color: var(--muted);
+      user-select: none;
+      list-style: none;
+    }
+
+    details.failure-details > summary::-webkit-details-marker { display: none; }
+
+    .failed-assert-grid {
+      display: grid;
+      gap: 0.65rem;
+      margin-top: 0.65rem;
+    }
+
+    .assert-group {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #0f1821;
+      padding: 0.5rem;
+    }
+
+    .assert-group-title {
+      font-size: 0.76rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.45rem;
+      font-family: "JetBrains Mono", "SFMono-Regular", monospace;
+    }
+
+    .failed-assert-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(230px, 1fr));
+      gap: 0.65rem;
+    }
+
+    .failed-slot {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #111b24;
+      padding: 0.5rem;
+      min-height: 90px;
+    }
+
+    .failed-slot.empty {
+      opacity: 0.45;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-size: 0.78rem;
     }
 
     .attachment .name {
@@ -206,11 +277,25 @@
     }
 
     .attachment img {
-      max-width: 280px;
       width: 100%;
+      max-width: 320px;
+      height: auto;
+      object-fit: contain;
       border-radius: 7px;
       border: 1px solid var(--border);
       display: block;
+      margin: 0 auto;
+    }
+
+    .failed-slot img {
+      width: 100%;
+      max-width: 320px;
+      height: auto;
+      object-fit: contain;
+      border-radius: 7px;
+      border: 1px solid var(--border);
+      display: block;
+      margin: 0 auto;
     }
 
     .attachment pre {
@@ -285,8 +370,6 @@
                 <th>Status</th>
                 <th>Test Name</th>
                 <th>Class</th>
-                <th>Duration</th>
-                <th>Details</th>
               </tr>
             </thead>
             <tbody>
@@ -297,37 +380,90 @@
                   </td>
                   <td class="mono">{{ test.name }}</td>
                   <td>{{ test.className }}</td>
-                  <td class="mono">{{ test.duration }}s</td>
-                  <td>
-                    {% if test.referenceURL != "" %}
-                      <a class="reference-btn" href="{{ test.referenceURL }}" target="_blank" rel="noopener">&#128279; View Reference</a>
-                    {% endif %}
-                    {% if test.status == "failed" %}
-                      <div class="failure">{{ test.failure.message }}{% if test.failure.file != "" %}
+                </tr>
+                {% if test.status == "failed" %}
+                  <tr>
+                    <td class="details-cell" colspan="3">
+                      <details class="failure-details">
+                        <summary>Details</summary>
+                        {% if test.referenceURL != "" %}
+                          <a class="reference-btn" href="{{ test.referenceURL }}" target="_blank" rel="noopener">&#128279; View Reference</a>
+                        {% endif %}
+                        <div class="failure">{{ test.failure.message }}{% if test.failure.file != "" %}
 
 File: {{ test.failure.file }}{% if test.failure.line != "" %}:{{ test.failure.line }}{% endif %}{% endif %}{% if test.failure.diff != "" %}
 
 {{ test.failure.diff }}{% endif %}</div>
-                    {% endif %}
 
-                    {% if test.attachments.count > 0 %}
-                      <div class="attachments{% if test.status == "passed" %} passed-variants{% endif %}">
-                        {% for attachment in test.attachments %}
-                          <div class="attachment" style="order: {{ attachment.variantOrder }};">
-                            <div class="name">{{ attachment.name }} ({{ attachment.type }})</div>
-                            {% if attachment.type == "png" %}
-                              <img src="{{ attachment.path }}" alt="{{ attachment.name }}" />
-                            {% elif attachment.type == "dump" or attachment.type == "text" %}
-                              <pre>{% if attachment.content != "" %}{{ attachment.content }}{% else %}Attachment file path: {{ attachment.path }}{% endif %}</pre>
-                            {% else %}
-                              <a href="{{ attachment.path }}">Download attachment</a>
-                            {% endif %}
+                        {% if test.failedGroups.count > 0 %}
+                          <div class="failed-assert-grid">
+                            {% for group in test.failedGroups %}
+                              <div class="assert-group">
+                                <div class="assert-group-title">{{ group.groupName }}</div>
+                                <div class="failed-assert-row">
+                                  {% if group.snapshot.exists %}
+                                    <div class="failed-slot">
+                                      <div class="name">Snapshot</div>
+                                      <img src="{{ group.snapshot.path }}" alt="Snapshot" />
+                                    </div>
+                                  {% else %}
+                                    <div class="failed-slot empty">Snapshot unavailable</div>
+                                  {% endif %}
+
+                                  {% if group.diff.exists %}
+                                    <div class="failed-slot">
+                                      <div class="name">Diff</div>
+                                      <img src="{{ group.diff.path }}" alt="Diff" />
+                                    </div>
+                                  {% else %}
+                                    <div class="failed-slot empty">Diff unavailable</div>
+                                  {% endif %}
+
+                                  {% if group.failure.exists %}
+                                    <div class="failed-slot">
+                                      <div class="name">Failure</div>
+                                      <img src="{{ group.failure.path }}" alt="Failure" />
+                                    </div>
+                                  {% else %}
+                                    <div class="failed-slot empty">Failure unavailable</div>
+                                  {% endif %}
+                                </div>
+                              </div>
+                            {% endfor %}
+                          </div>
+                        {% endif %}
+                      </details>
+                    </td>
+                  </tr>
+                {% endif %}
+
+                {% if test.status == "passed" and test.passedGroups.count > 0 %}
+                  <tr>
+                    <td class="details-cell" colspan="3">
+                      <div class="failed-assert-grid">
+                        {% for group in test.passedGroups %}
+                          <div class="assert-group">
+                            <div class="assert-group-title">{{ group.groupName }}</div>
+                            <div class="attachments passed-variants">
+                              {% for attachment in group.attachments %}
+                                <div class="attachment" style="order: {{ attachment.variantOrder }};">
+                                  <div class="name">{{ attachment.name }} ({{ attachment.type }})</div>
+                                  {% if attachment.type == "png" %}
+                                    <img src="{{ attachment.path }}" alt="{{ attachment.name }}" />
+                                  {% elif attachment.type == "dump" or attachment.type == "text" %}
+                                    <pre>{% if attachment.content != "" %}{{ attachment.content }}{% else %}Attachment file path: {{ attachment.path }}{% endif %}</pre>
+                                  {% else %}
+                                    <a href="{{ attachment.path }}">Download attachment</a>
+                                  {% endif %}
+                                </div>
+                              {% endfor %}
+                            </div>
                           </div>
                         {% endfor %}
                       </div>
-                    {% endif %}
-                  </td>
-                </tr>
+                    </td>
+                  </tr>
+                {% endif %}
               {% endfor %}
             </tbody>
           </table>

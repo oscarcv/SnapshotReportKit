@@ -1,0 +1,99 @@
+name: SnapshotExamplesApps
+options:
+  minimumXcodeGenVersion: 2.38.0
+  deploymentTarget:
+    iOS: "15.0"
+settings:
+  base:
+    SWIFT_VERSION: 6.0
+    IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+packages:
+  ExampleLib:
+    path: ../lib
+  SnapshotReportKit:
+    path: ../..
+  SnapshotTesting:
+    url: https://github.com/pointfreeco/swift-snapshot-testing
+    from: 1.17.6
+targets:
+  UIKitExampleApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources/UIKitExampleApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.snapshot.examples.uikit
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+    dependencies:
+      - package: ExampleLib
+        product: ExampleUIKitScreens
+
+  SwiftUIExampleApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources/SwiftUIExampleApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.snapshot.examples.swiftui
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - package: ExampleLib
+        product: ExampleSwiftUIScreens
+
+  UIKitSnapshotsTests:
+    type: bundle.unit-test
+    platform: iOS
+    hostApplication: UIKitExampleApp
+    sources:
+      - path: ../lib/Tests/UIKitSnapshotsTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.snapshot.examples.uikit.tests
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - package: ExampleLib
+        product: ExampleUIKitScreens
+      - package: SnapshotReportKit
+        product: SnapshotReportTesting
+      - package: SnapshotTesting
+        product: SnapshotTesting
+
+  SwiftUISnapshotsTests:
+    type: bundle.unit-test
+    platform: iOS
+    hostApplication: SwiftUIExampleApp
+    sources:
+      - path: ../lib/Tests/SwiftUISnapshotsTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.snapshot.examples.swiftui.tests
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - package: ExampleLib
+        product: ExampleSwiftUIScreens
+      - package: SnapshotReportKit
+        product: SnapshotReportTesting
+      - package: SnapshotTesting
+        product: SnapshotTesting
+
+schemes:
+  UIKitExampleApp:
+    build:
+      targets:
+        UIKitExampleApp: all
+        UIKitSnapshotsTests: [test]
+    test:
+      testPlans:
+        - path: TestPlans/UIKitSnapshots.xctestplan
+
+  SwiftUIExampleApp:
+    build:
+      targets:
+        SwiftUIExampleApp: all
+        SwiftUISnapshotsTests: [test]
+    test:
+      testPlans:
+        - path: TestPlans/SwiftUISnapshots.xctestplan

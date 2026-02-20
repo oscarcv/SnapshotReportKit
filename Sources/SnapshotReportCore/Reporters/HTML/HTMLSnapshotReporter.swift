@@ -113,6 +113,8 @@ struct HTMLRenderer {
                 "variantOrder": variantOrder(for: attachment.path)
             ]
         }
+        let failedGroups = makeFailedAttachmentGroups(for: test, outputDirectory: outputDirectory)
+        let passedGroups = makePassedAttachmentGroups(for: test, outputDirectory: outputDirectory)
         let failureDict: [String: Any] = [
             "message": test.failure?.message ?? "",
             "file": test.failure?.file ?? "",
@@ -127,7 +129,9 @@ struct HTMLRenderer {
             "duration": String(format: "%.3f", test.duration),
             "failure": failureDict,
             "referenceURL": test.referenceURL ?? "",
-            "attachments": attachmentsArray
+            "attachments": attachmentsArray,
+            "failedGroups": failedGroups,
+            "passedGroups": passedGroups
         ]
     }
 
@@ -156,5 +160,209 @@ struct HTMLRenderer {
         if value.contains("high-contrast-dark") { return 3 }
 
         return 999
+    }
+
+    private func makeFailedAttachmentGroups(for test: SnapshotTestCase, outputDirectory: URL) -> [[String: Any]] {
+        guard test.status == .failed else { return [] }
+
+        struct Group {
+            var snapshot: SnapshotAttachment?
+            var diff: SnapshotAttachment?
+            var failure: SnapshotAttachment?
+        }
+
+        var groups: [String: Group] = [:]
+        var orderedKeys: [String] = []
+        var ungroupedIndex = 0
+
+        for attachment in test.attachments {
+            guard let kind = failedAttachmentKind(for: attachment) else { continue }
+            let key = failedAttachmentGroupKey(for: attachment) ?? "ungrouped-\(ungroupedIndex)"
+            if failedAttachmentGroupKey(for: attachment) == nil {
+                ungroupedIndex += 1
+            }
+
+            if groups[key] == nil {
+                groups[key] = Group()
+                orderedKeys.append(key)
+            }
+
+            switch kind {
+            case "snapshot":
+                groups[key]?.snapshot = attachment
+            case "diff":
+                groups[key]?.diff = attachment
+            case "failure":
+                groups[key]?.failure = attachment
+            default:
+                break
+            }
+        }
+
+        return orderedKeys.compactMap { key in
+            guard let group = groups[key] else { return nil }
+            if group.snapshot == nil && group.diff == nil && group.failure == nil {
+                return nil
+            }
+            let groupName = failedGroupName(
+                key: key,
+                snapshot: group.snapshot,
+                failure: group.failure
+            )
+            return [
+                "groupName": groupName,
+                "snapshot": attachmentContext(group.snapshot, label: "Snapshot", outputDirectory: outputDirectory),
+                "diff": attachmentContext(group.diff, label: "Diff", outputDirectory: outputDirectory),
+                "failure": attachmentContext(group.failure, label: "Failure", outputDirectory: outputDirectory),
+            ]
+        }
+    }
+
+    private func makePassedAttachmentGroups(for test: SnapshotTestCase, outputDirectory: URL) -> [[String: Any]] {
+        guard test.status == .passed else { return [] }
+        guard !test.attachments.isEmpty else { return [] }
+
+        var grouped: [String: [SnapshotAttachment]] = [:]
+        var order: [String] = []
+
+        for attachment in sortAttachmentsForVariantDisplay(test.attachments) {
+            let key = passedGroupName(for: attachment)
+            if grouped[key] == nil {
+                grouped[key] = []
+                order.append(key)
+            }
+            grouped[key, default: []].append(attachment)
+        }
+
+        return order.map { key in
+            let items: [[String: Any]] = grouped[key, default: []].map { attachment in
+                let fullPath = outputDirectory.appendingPathComponent(attachment.path).path
+                let textContent: String
+                if attachment.type == .text || attachment.type == .dump {
+                    textContent = (try? String(contentsOfFile: fullPath, encoding: .utf8)) ?? ""
+                } else {
+                    textContent = ""
+                }
+                return [
+                    "name": attachment.name,
+                    "type": attachment.type.rawValue,
+                    "path": attachment.path,
+                    "content": textContent,
+                    "variantOrder": variantOrder(for: attachment.path)
+                ]
+            }
+            return [
+                "groupName": key,
+                "attachments": items
+            ]
+        }
+    }
+
+    private func failedAttachmentKind(for attachment: SnapshotAttachment) -> String? {
+        let value = attachment.name.lowercased()
+        if value == "snapshot" || value.contains("reference") { return "snapshot" }
+        if value == "diff" || value == "odiff" || value.contains("difference") { return "diff" }
+        if value == "actual snapshot" || value.contains("failure") || value.contains("actual") || value.contains("current") {
+            return "failure"
+        }
+        return nil
+    }
+
+    private func failedAttachmentGroupKey(for attachment: SnapshotAttachment) -> String? {
+        let filename = URL(fileURLWithPath: attachment.path).lastPathComponent
+        let patterns = [
+            #"(?:reference|failure|difference)_\d+_([A-F0-9-]+)\.(?:png|jpg|jpeg)$"#,
+            #"(?:reference|failure|difference)-([A-F0-9-]+)\.(?:png|jpg|jpeg)$"#
+        ]
+
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { continue }
+            let range = NSRange(location: 0, length: filename.utf16.count)
+            guard let match = regex.firstMatch(in: filename, options: [], range: range), match.numberOfRanges > 1 else { continue }
+            if let captureRange = Range(match.range(at: 1), in: filename) {
+                return String(filename[captureRange])
+            }
+        }
+
+        return nil
+    }
+
+    private func attachmentContext(_ attachment: SnapshotAttachment?, label: String, outputDirectory: URL) -> [String: Any] {
+        guard let attachment else {
+            return [
+                "exists": false,
+                "name": label,
+                "type": "",
+                "path": "",
+                "content": ""
+            ]
+        }
+
+        let fullPath = outputDirectory.appendingPathComponent(attachment.path).path
+        let textContent: String
+        if attachment.type == .text || attachment.type == .dump {
+            textContent = (try? String(contentsOfFile: fullPath, encoding: .utf8)) ?? ""
+        } else {
+            textContent = ""
+        }
+
+        return [
+            "exists": true,
+            "name": label,
+            "type": attachment.type.rawValue,
+            "path": attachment.path,
+            "content": textContent
+        ]
+    }
+
+    private func passedGroupName(for attachment: SnapshotAttachment) -> String {
+        let candidate = attachment.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let suffixes = [
+            "-high-contrast-light",
+            "-high-contrast-dark",
+            "-light",
+            "-dark"
+        ]
+
+        for suffix in suffixes {
+            if candidate.lowercased().hasSuffix(suffix) {
+                return String(candidate.dropLast(suffix.count))
+            }
+        }
+
+        return candidate
+    }
+
+    private func failedGroupName(key: String, snapshot: SnapshotAttachment?, failure: SnapshotAttachment?) -> String {
+        if let snapshot {
+            let raw = URL(fileURLWithPath: snapshot.path).deletingPathExtension().lastPathComponent
+            if let name = extractNamedSegment(from: raw) {
+                return name
+            }
+        }
+        if let failure {
+            let raw = URL(fileURLWithPath: failure.path).deletingPathExtension().lastPathComponent
+            if let name = extractNamedSegment(from: raw) {
+                return name
+            }
+        }
+        if key.hasPrefix("ungrouped-"),
+           let index = Int(key.replacingOccurrences(of: "ungrouped-", with: "")) {
+            return "assert-\(index + 1)"
+        }
+        return key
+    }
+
+    private func extractNamedSegment(from filename: String) -> String? {
+        if let range = filename.range(of: #"^[^.]+\.(.+)$"#, options: .regularExpression) {
+            var value = String(filename[range]).replacingOccurrences(of: #"^[^.]+\."#, with: "", options: .regularExpression)
+            value = value.replacingOccurrences(of: #"\.(png|jpg|jpeg)$"#, with: "", options: .regularExpression)
+            let suffixes = ["-high-contrast-light", "-high-contrast-dark", "-light", "-dark"]
+            for suffix in suffixes where value.lowercased().hasSuffix(suffix) {
+                return String(value.dropLast(suffix.count))
+            }
+            return value
+        }
+        return nil
     }
 }

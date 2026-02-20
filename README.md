@@ -46,6 +46,20 @@ Protocol:
 swift build
 ```
 
+## Examples
+
+Examples are isolated from the package source under:
+
+- `examples/lib`: standalone examples package with UIKit/SwiftUI modules and snapshot package test targets.
+- `examples/app`: Xcode apps project with UIKit and SwiftUI app variants plus per-variant test plans.
+
+Generate the app project:
+
+```bash
+cd examples/app
+./Scripts/generate_project.sh
+```
+
 ## CLI Usage
 
 ### Basic report generation
@@ -73,8 +87,14 @@ swift run snapshot-report \
 No custom assertion layer needed — point at the `.xcresult` produced by `xcodebuild test`:
 
 ```bash
+xcodebuild test \
+  -project MyApp.xcodeproj \
+  -scheme MyApp \
+  -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+  -resultBundlePath .artifacts/xcresult/MyApp.xcresult
+
 swift run snapshot-report \
-  --xcresult DerivedData/MyApp.xcresult \
+  --xcresult .artifacts/xcresult/MyApp.xcresult \
   --format json,junit,html \
   --output .artifacts/report
 ```
@@ -83,7 +103,7 @@ Mix JSON runs and xcresult bundles freely:
 
 ```bash
 swift run snapshot-report \
-  --xcresult DerivedData/MyApp.xcresult \
+  --xcresult .artifacts/xcresult/MyApp.xcresult \
   --input .artifacts/extra-run.json \
   --output .artifacts/report
 ```
@@ -228,46 +248,16 @@ Attachment `type` values:
 
 `referenceURL` is optional. When present it renders a "View Reference" link in the HTML report.
 
-## Integration With SnapshotTesting
+## Public Products
 
-Use the included collector to record test outcomes from your test target and emit input JSON:
+Only these package products are meant for external consumers:
 
-```swift
-import SnapshotReportCore
-
-let collector = SnapshotReportCollector(reportName: "UI Snapshots")
-
-await collector.recordFailure(
-  suite: "CheckoutSnapshots",
-  test: "testCheckoutCard",
-  className: "CheckoutSnapshotsTests",
-  duration: 0.152,
-  message: "Snapshot mismatch",
-  file: #filePath,
-  line: #line,
-  diff: "Pixel mismatch around CTA area",
-  attachments: [
-    .init(name: "Snapshot", type: .png, path: "/tmp/reference.png"),
-    .init(name: "Diff", type: .dump, path: "/tmp/diff.txt")
-  ],
-  referenceURL: "https://app.zeplin.io/project/abc/screen/123"
-)
-
-try await collector.writeJSON(to: URL(fileURLWithPath: ".artifacts/run-ios.json"))
-```
-
-Then aggregate multiple runs:
-
-```bash
-swift run snapshot-report \
-  --input .artifacts/run-ios.json \
-  --input .artifacts/run-macos.json \
-  --output .artifacts/report
-```
+- `SnapshotReportTesting` (library): snapshot assertions + automatic run recording for test targets.
+- `snapshot-report` (executable): merges run inputs and emits JSON/JUnit/HTML reports.
 
 ## SnapshotTesting Extension (Automatic Reports)
 
-`SnapshotReportSnapshotTesting` extends [pointfreeco/swift-snapshot-testing](https://github.com/pointfreeco/swift-snapshot-testing) with:
+`SnapshotReportTesting` extends [pointfreeco/swift-snapshot-testing](https://github.com/pointfreeco/swift-snapshot-testing) with:
 
 - Report-aware assertions
 - Automatic JSON run report generation at test bundle end
@@ -283,7 +273,7 @@ swift run snapshot-report \
 1. Add this package to your Xcode project.
 2. Link your test target with:
    - `SnapshotTesting`
-   - `SnapshotReportSnapshotTesting`
+   - `SnapshotReportTesting`
 3. (Optional) add env vars in your test scheme:
    - `SNAPSHOT_REPORT_OUTPUT_DIR=.artifacts/snapshot-runs`
    - `SNAPSHOT_REPORT_NAME=My App Snapshot Tests`
@@ -295,7 +285,7 @@ swift run snapshot-report \
 ```swift
 import Testing
 import SnapshotTesting
-import SnapshotReportSnapshotTesting
+import SnapshotReportTesting
 
 @Suite("Login Snapshots")
 struct LoginSnapshots {
@@ -347,7 +337,7 @@ struct LoginSnapshots {
 ```swift
 import XCTest
 import SnapshotTesting
-import SnapshotReportSnapshotTesting
+import SnapshotReportTesting
 
 final class LoginSnapshotsTests: XCTestCase {
   override func setUp() {
@@ -419,8 +409,14 @@ swift run snapshot-report \
   --format json,junit,html
 
 # From xcresult (no custom assertion layer required)
+xcodebuild test \
+  -project MyApp.xcodeproj \
+  -scheme MyApp \
+  -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+  -resultBundlePath .artifacts/xcresult/MyApp.xcresult
+
 swift run snapshot-report \
-  --xcresult DerivedData/MyApp.xcresult \
+  --xcresult .artifacts/xcresult/MyApp.xcresult \
   --output .artifacts/report \
   --format json,junit,html
 ```

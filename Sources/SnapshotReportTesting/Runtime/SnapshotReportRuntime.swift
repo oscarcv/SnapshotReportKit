@@ -110,10 +110,22 @@ public actor SnapshotReportRuntime {
                 referenceURL: referenceURL
             )
         }
+
+        await persistCurrentReport()
     }
 
     public func flush() async {
+        // Record operations are scheduled via Task from synchronous assertion APIs.
+        // Wait briefly so those tasks can hop onto the actor before concluding there is no data.
+        var waitsRemaining = 20
+        while !hasRecords && waitsRemaining > 0 {
+            waitsRemaining -= 1
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+        }
         guard hasRecords else { return }
+
+        // Give in-flight record calls a short quiescence window before final aggregation.
+        try? await Task.sleep(nanoseconds: 150_000_000)
 
         let destination = URL(fileURLWithPath: configuration.outputJSONPath)
         let dir = destination.deletingLastPathComponent()
@@ -134,6 +146,18 @@ public actor SnapshotReportRuntime {
             }
         } catch {
             fputs("SnapshotReportRuntime flush error: \(error)\n", stderr)
+        }
+    }
+
+    private func persistCurrentReport() async {
+        let destination = URL(fileURLWithPath: configuration.outputJSONPath)
+        let dir = destination.deletingLastPathComponent()
+
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try await collector.writeJSON(to: destination, metadata: configuration.metadata)
+        } catch {
+            fputs("SnapshotReportRuntime persist error: \(error)\n", stderr)
         }
     }
 }

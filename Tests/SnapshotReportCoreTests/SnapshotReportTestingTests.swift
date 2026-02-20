@@ -1,5 +1,5 @@
 import Testing
-@testable import SnapshotReportSnapshotTesting
+@testable import SnapshotReportTesting
 
 @Test
 func defaultAppearancePair() {

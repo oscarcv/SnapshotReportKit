@@ -1,4 +1,5 @@
 import Foundation
+import SnapshotReportCore
 
 /// Runs the `odiff` binary for each failed test that has both a `"Snapshot"`
 /// (reference) attachment and an `"Actual Snapshot"` (captured) attachment.

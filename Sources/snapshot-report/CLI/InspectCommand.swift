@@ -90,7 +90,12 @@ struct ProjectInspector {
     /// Scans the pbxproj text for references to swift-snapshot-testing within
     /// PBXNativeTarget sections and returns the matching target names.
     func detectSnapshotTargets(pbxproj: String) -> [String] {
-        let markers = ["swift-snapshot-testing", "SnapshotReportSnapshotTesting", "SnapshotTesting"]
+        let markers = [
+            "swift-snapshot-testing",
+            "SnapshotReportTesting",
+            "SnapshotReportSnapshotTesting",
+            "SnapshotTesting"
+        ]
         let lines = pbxproj.components(separatedBy: "\n")
 
         var targetNames: [String] = []
@@ -172,10 +177,11 @@ struct ProjectInspectionResult {
         lines.append("=== SnapshotReportKit Inspection: \(projectPath.lastPathComponent) ===\n")
 
         if snapshotTargets.isEmpty {
-            lines.append("No test targets referencing swift-snapshot-testing or SnapshotReportSnapshotTesting were detected.")
+            lines.append("No test targets referencing swift-snapshot-testing or SnapshotReportTesting were detected.")
             lines.append("If your project uses snapshot testing, ensure the package dependency name matches one of:")
             lines.append("  • swift-snapshot-testing")
-            lines.append("  • SnapshotReportSnapshotTesting")
+            lines.append("  • SnapshotReportTesting (preferred)")
+            lines.append("  • SnapshotReportSnapshotTesting (legacy)")
             lines.append("  • SnapshotTesting")
         } else {
             lines.append("Snapshot testing targets detected:")

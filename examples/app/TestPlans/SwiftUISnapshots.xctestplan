@@ -1,0 +1,30 @@
+{
+  "configurations" : [
+    {
+      "id" : "5B81E686-7061-4FED-BA1B-83FC72BD322F",
+      "name" : "Configuration 1",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "environmentVariableEntries" : [
+      {
+        "key" : "SNAPSHOT_REPORT_OUTPUT_DIR",
+        "value" : "$(SRCROOT)/.artifacts/snapshot-runs-pass",
+        "isEnabled" : true
+      }
+    ]
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:SnapshotExamplesApps.xcodeproj",
+        "identifier" : "1142474F67C410A64658A934",
+        "name" : "SwiftUISnapshotsTests"
+      }
+    }
+  ],
+  "version" : 1
+}

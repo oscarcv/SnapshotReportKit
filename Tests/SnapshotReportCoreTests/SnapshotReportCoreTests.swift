@@ -174,3 +174,58 @@ func htmlReporterOrdersPassedVariantAttachmentsHorizontally() throws {
 
     #expect(html.contains("attachments passed-variants"))
 }
+
+@Test
+func htmlReporterRendersFailedDetailsWithSnapshotDiffFailureOrder() throws {
+    let outputDirectory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("SnapshotReportCoreTests-html-failed-order-\(UUID().uuidString)", isDirectory: true)
+    let sourceDirectory = outputDirectory.appendingPathComponent("sources", isDirectory: true)
+    try FileManager.default.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: outputDirectory) }
+
+    let files = [
+        "failure_1_12345678-1234-1234-1234-123456789ABC.png",
+        "difference_2_12345678-1234-1234-1234-123456789ABC.png",
+        "reference_0_12345678-1234-1234-1234-123456789ABC.png",
+    ]
+
+    for file in files {
+        try Data("x".utf8).write(to: sourceDirectory.appendingPathComponent(file))
+    }
+
+    let report = SnapshotReport(
+        name: "FailedLayout",
+        suites: [
+            SnapshotSuite(name: "Suite", tests: [
+                SnapshotTestCase(
+                    name: "testFailed",
+                    className: "SuiteTests",
+                    status: .failed,
+                    duration: 0.01,
+                    failure: SnapshotFailure(message: "boom"),
+                    attachments: [
+                        SnapshotAttachment(name: "Actual Snapshot", type: .png, path: sourceDirectory.appendingPathComponent(files[0]).path),
+                        SnapshotAttachment(name: "Diff", type: .png, path: sourceDirectory.appendingPathComponent(files[1]).path),
+                        SnapshotAttachment(name: "Snapshot", type: .png, path: sourceDirectory.appendingPathComponent(files[2]).path),
+                    ]
+                )
+            ])
+        ]
+    )
+
+    try SnapshotReportWriters.write(report, format: .html, options: .init(outputDirectory: outputDirectory))
+    let htmlPath = outputDirectory.appendingPathComponent("html/index.html").path
+    let html = try String(contentsOfFile: htmlPath, encoding: .utf8)
+
+    #expect(html.contains("failure-details"))
+    #expect(html.contains("failed-assert-row"))
+
+    guard
+        let snapshotRange = html.range(of: "<div class=\"name\">Snapshot</div>"),
+        let diffRange = html.range(of: "<div class=\"name\">Diff</div>", range: snapshotRange.upperBound..<html.endIndex),
+        html.range(of: "<div class=\"name\">Failure</div>", range: diffRange.upperBound..<html.endIndex) != nil
+    else {
+        Issue.record("Expected Snapshot -> Diff -> Failure order in failed details row")
+        return
+    }
+}

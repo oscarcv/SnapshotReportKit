@@ -268,7 +268,7 @@ public func assertSnapshot(
 
 public extension XCTestCase {
     func configureSnapshotAssertionDefaults(_ defaults: SnapshotAssertionDefaults) {
-        SnapshotReportSnapshotTesting.configureSnapshotAssertionDefaults(defaults)
+        SnapshotReportTesting.configureSnapshotAssertionDefaults(defaults)
     }
 
     func configureSnapshotReport(
@@ -276,7 +276,7 @@ public extension XCTestCase {
         outputJSONPath: String? = nil,
         metadata: [String: String] = [:]
     ) {
-        SnapshotReportSnapshotTesting.configureSnapshotReport(
+        SnapshotReportTesting.configureSnapshotReport(
             reportName: reportName,
             outputJSONPath: outputJSONPath,
             metadata: metadata
@@ -343,7 +343,7 @@ public extension XCTestCase {
             return [message]
         }
 
-        return SnapshotReportSnapshotTesting.assertSnapshot(
+        return SnapshotReportTesting.assertSnapshot(
             of: value,
             device: device,
             configuredOSMajorVersion: configuredOSMajorVersion,

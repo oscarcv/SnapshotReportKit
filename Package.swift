@@ -4,11 +4,11 @@ import PackageDescription
 let package = Package(
     name: "SnapshotReportKit",
     platforms: [
+        .iOS(.v15),
         .macOS(.v13)
     ],
     products: [
-        .library(name: "SnapshotReportCore", targets: ["SnapshotReportCore"]),
-        .library(name: "SnapshotReportSnapshotTesting", targets: ["SnapshotReportSnapshotTesting"]),
+        .library(name: "SnapshotReportTesting", targets: ["SnapshotReportTesting"]),
         .executable(name: "snapshot-report", targets: ["snapshot-report"])
     ],
     dependencies: [
@@ -26,21 +26,37 @@ let package = Package(
             ]
         ),
         .target(
-            name: "SnapshotReportSnapshotTesting",
+            name: "SnapshotReportTesting",
             dependencies: [
                 "SnapshotReportCore",
                 .product(name: "SnapshotTesting", package: "swift-snapshot-testing")
             ]
         ),
+        .target(
+            name: "SnapshotReportOdiff",
+            dependencies: [
+                "SnapshotReportCore"
+            ]
+        ),
+        .target(
+            name: "SnapshotReportCLI",
+            dependencies: [
+                "SnapshotReportCore"
+            ]
+        ),
         .executableTarget(
             name: "snapshot-report",
-            dependencies: ["SnapshotReportCore"]
+            dependencies: [
+                "SnapshotReportCore",
+                "SnapshotReportOdiff",
+                "SnapshotReportCLI"
+            ]
         ),
         .testTarget(
             name: "SnapshotReportCoreTests",
             dependencies: [
                 "SnapshotReportCore",
-                "SnapshotReportSnapshotTesting"
+                "SnapshotReportTesting"
             ]
         )
     ]

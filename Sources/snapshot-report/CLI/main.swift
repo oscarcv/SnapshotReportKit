@@ -1,5 +1,7 @@
 import Foundation
 import SnapshotReportCore
+import SnapshotReportOdiff
+import SnapshotReportCLI
 
 struct CLI {
     static func run() throws {
@@ -134,7 +136,7 @@ struct CLI {
             }
         }
 
-        guard !resolved.isEmpty else {
+        guard !resolved.isEmpty || !options.xcresultInputs.isEmpty else {
             throw SnapshotReportError.invalidInput("No JSON inputs found from --input/--input-dir")
         }
 
