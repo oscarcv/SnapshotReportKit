@@ -380,13 +380,46 @@ func htmlRendererTemplateCandidatesIncludeResolvedSymlinkPath() throws {
     let expectedCFBundleLayout = cellarBin
         .appendingPathComponent("SnapshotReportKit_SnapshotReportCore.bundle/Contents/Resources/default-report.stencil")
         .path
+    let expectedLibexecSwiftPMLayout = temporaryRoot
+        .appendingPathComponent("Cellar/snapshot-report-nightly/0.1.0/libexec/SnapshotReportKit_SnapshotReportCore.bundle/default-report.stencil")
+        .path
+    let expectedLibexecCFBundleLayout = temporaryRoot
+        .appendingPathComponent("Cellar/snapshot-report-nightly/0.1.0/libexec/SnapshotReportKit_SnapshotReportCore.bundle/Contents/Resources/default-report.stencil")
+        .path
 
     #expect(candidates.contains(expectedSwiftPMLayout))
     #expect(candidates.contains(expectedCFBundleLayout))
+    #expect(candidates.contains(expectedLibexecSwiftPMLayout))
+    #expect(candidates.contains(expectedLibexecCFBundleLayout))
 }
 
 @Test
 func htmlRendererTemplateCandidatesIncludeSourceFallback() {
     let candidates = HTMLRenderer.defaultTemplateCandidateURLs(executablePath: "/tmp/snapshot-report").map(\.path)
     #expect(candidates.contains { $0.hasSuffix("/Sources/SnapshotReportCore/Resources/default-report.stencil") })
+}
+
+@Test
+func htmlRendererTemplateCandidatesIncludeBrewShareFallbacks() {
+    let executablePath = "/opt/homebrew/Cellar/snapshot-report-nightly/2026.02.20.6/bin/snapshot-report-nightly"
+    let candidates = HTMLRenderer.defaultTemplateCandidateURLs(executablePath: executablePath).map(\.path)
+
+    #expect(candidates.contains("/opt/homebrew/Cellar/snapshot-report-nightly/2026.02.20.6/bin/SnapshotReportKit_SnapshotReportCore.bundle/default-report.stencil"))
+    #expect(candidates.contains("/opt/homebrew/Cellar/snapshot-report-nightly/2026.02.20.6/libexec/SnapshotReportKit_SnapshotReportCore.bundle/default-report.stencil"))
+    #expect(candidates.contains("/opt/homebrew/Cellar/snapshot-report-nightly/2026.02.20.6/share/snapshot-report/SnapshotReportKit_SnapshotReportCore.bundle/default-report.stencil"))
+}
+
+@Test
+func htmlRendererTemplateCandidatesIncludeEnvironmentOverrides() {
+    let candidates = HTMLRenderer.environmentTemplateCandidateURLs(
+        environment: [
+            "SNAPSHOT_REPORT_HTML_TEMPLATE": "/tmp/custom-template.stencil",
+            "SNAPSHOT_REPORT_RESOURCE_BUNDLE": "/opt/homebrew/Cellar/snapshot-report-nightly/2026.02.20.6/bin/SnapshotReportKit_SnapshotReportCore.bundle",
+            "SNAPSHOT_REPORT_INSTALL_ROOT": "/opt/homebrew/Cellar/snapshot-report-nightly/2026.02.20.6/bin",
+        ]
+    ).map(\.path)
+
+    #expect(candidates.contains("/tmp/custom-template.stencil"))
+    #expect(candidates.contains("/opt/homebrew/Cellar/snapshot-report-nightly/2026.02.20.6/bin/SnapshotReportKit_SnapshotReportCore.bundle/default-report.stencil"))
+    #expect(candidates.contains("/opt/homebrew/Cellar/snapshot-report-nightly/2026.02.20.6/bin/SnapshotReportKit_SnapshotReportCore.bundle/Contents/Resources/default-report.stencil"))
 }
