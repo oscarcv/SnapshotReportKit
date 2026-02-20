@@ -36,6 +36,39 @@ func mergeAggregatesSuitesAndCounts() {
 }
 
 @Test
+func summaryComputesDurationAndStatusCounts() {
+    let report = SnapshotReport(
+        name: "Summary",
+        suites: [
+            SnapshotSuite(name: "Suite", tests: [
+                SnapshotTestCase(name: "pass", className: "SuiteTests", status: .passed, duration: 0.2),
+                SnapshotTestCase(name: "fail", className: "SuiteTests", status: .failed, duration: 0.3),
+                SnapshotTestCase(name: "skip", className: "SuiteTests", status: .skipped, duration: 0.0),
+            ])
+        ]
+    )
+
+    let summary = report.summary
+    #expect(summary.total == 3)
+    #expect(summary.passed == 1)
+    #expect(summary.failed == 1)
+    #expect(summary.skipped == 1)
+    #expect(summary.duration == 0.5)
+}
+
+@Test
+func reportAggregatorMergesMetadataWithLastWriterWins() {
+    let a = SnapshotReport(name: "A", suites: [], metadata: ["branch": "main", "scheme": "AppA"])
+    let b = SnapshotReport(name: "B", suites: [], metadata: ["branch": "release", "target": "UIKit"])
+
+    let merged = SnapshotReportAggregator.merge(reports: [a, b], name: "Merged")
+
+    #expect(merged.metadata["branch"] == "release")
+    #expect(merged.metadata["scheme"] == "AppA")
+    #expect(merged.metadata["target"] == "UIKit")
+}
+
+@Test
 func junitRendererIncludesAttachments() {
     let report = SnapshotReport(
         name: "Snapshots",
@@ -89,6 +122,98 @@ func writersUseReporterImplementations() throws {
     #expect(FileManager.default.fileExists(atPath: outputDirectory.appendingPathComponent("report.json").path))
     #expect(FileManager.default.fileExists(atPath: outputDirectory.appendingPathComponent("report.junit.xml").path))
     #expect(FileManager.default.fileExists(atPath: outputDirectory.appendingPathComponent("html/index.html").path))
+}
+
+@Test
+func snapshotReportIOSaveAndLoadRoundTrip() throws {
+    let outputDirectory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("SnapshotReportCoreTests-io-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: outputDirectory) }
+
+    let url = outputDirectory.appendingPathComponent("roundtrip.json")
+    let original = SnapshotReport(
+        name: "Roundtrip",
+        suites: [
+            SnapshotSuite(name: "Suite", tests: [
+                SnapshotTestCase(
+                    name: "testSnapshot",
+                    className: "SuiteTests",
+                    status: .failed,
+                    duration: 0.42,
+                    failure: SnapshotFailure(message: "mismatch", file: "/tmp/file.swift", line: 12, diff: "diff"),
+                    attachments: [SnapshotAttachment(name: "Snapshot", type: .png, path: "/tmp/a.png")],
+                    referenceURL: "https://example.com"
+                )
+            ])
+        ],
+        metadata: ["branch": "main"]
+    )
+
+    try SnapshotReportIO.saveReport(original, to: url)
+    let loaded = try SnapshotReportIO.loadReport(from: url)
+
+    #expect(loaded.name == original.name)
+    #expect(loaded.suites.count == 1)
+    #expect(loaded.suites[0].tests.count == 1)
+    #expect(loaded.suites[0].tests[0].failure?.message == "mismatch")
+    #expect(loaded.suites[0].tests[0].attachments.first?.type == .png)
+    #expect(loaded.metadata["branch"] == "main")
+}
+
+@Test(arguments: [
+    (SnapshotAttachmentType.png, "image/png"),
+    (SnapshotAttachmentType.text, "text/plain"),
+    (SnapshotAttachmentType.dump, "text/plain"),
+    (SnapshotAttachmentType.binary, "application/octet-stream"),
+])
+func attachmentTypeMimeTypeMapping(_ type: SnapshotAttachmentType, _ expected: String) {
+    #expect(type.mimeType == expected)
+}
+
+@Test
+func snapshotReportErrorDescriptionsAreStable() {
+    #expect(SnapshotReportError.invalidInput("x").description == "Invalid input: x")
+    #expect(SnapshotReportError.writeFailed("y").description == "Write failed: y")
+}
+
+@Test
+func htmlReporterShortensOversizedAttachmentFileNames() throws {
+    let outputDirectory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("SnapshotReportCoreTests-html-short-name-\(UUID().uuidString)", isDirectory: true)
+    let sourceDirectory = outputDirectory.appendingPathComponent("sources", isDirectory: true)
+    try FileManager.default.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: outputDirectory) }
+
+    let sourceFile = sourceDirectory.appendingPathComponent("base.png")
+    try Data("png".utf8).write(to: sourceFile)
+    let longID = String(repeating: "very-long-test-id-", count: 20)
+
+    let report = SnapshotReport(
+        name: "LongFile",
+        suites: [
+            SnapshotSuite(name: "Suite", tests: [
+                SnapshotTestCase(
+                    id: longID,
+                    name: "testLongName",
+                    className: "SuiteTests",
+                    status: .passed,
+                    duration: 0.01,
+                    attachments: [
+                        SnapshotAttachment(name: "Snapshot", type: .png, path: sourceFile.path)
+                    ]
+                )
+            ])
+        ]
+    )
+
+    try SnapshotReportWriters.write(report, format: .html, options: .init(outputDirectory: outputDirectory))
+
+    let attachmentsDir = outputDirectory.appendingPathComponent("html/attachments", isDirectory: true)
+    let attachmentFiles = try FileManager.default.contentsOfDirectory(atPath: attachmentsDir.path)
+    #expect(attachmentFiles.count == 1)
+    #expect(attachmentFiles[0].lengthOfBytes(using: .utf8) <= 240)
+    #expect(attachmentFiles[0].hasSuffix(".png"))
 }
 
 @Test
