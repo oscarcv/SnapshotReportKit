@@ -5,7 +5,6 @@ import SnapshotReportCLI
 
 struct CLI {
     static func run() throws {
-        CLIUI.header("snapshot-report")
         let arguments = Array(CommandLine.arguments.dropFirst())
 
         if arguments.first == "inspect" {
@@ -19,10 +18,14 @@ struct CLI {
         }
 
         let options = try parse(arguments: arguments)
+        CLIUI.setVerbose(options.verbose)
+        CLIUI.header("snapshot-report")
         try FileManager.default.createDirectory(at: options.outputDirectory, withIntermediateDirectories: true)
 
+        let startedAt = Date()
         CLIUI.step("Resolving input files")
         let resolvedInputs = try resolveInputs(options: options)
+        CLIUI.debug("Resolved \(resolvedInputs.count) JSON inputs and \(options.xcresultInputs.count) xcresult inputs")
 
         CLIUI.step("Loading JSON reports (\(resolvedInputs.count))")
         let reports = try _loadJSONReports(inputs: resolvedInputs, jobs: options.jobs) { completed, total, input in
@@ -36,13 +39,16 @@ struct CLI {
 
         CLIUI.step("Merging report data")
         let mergedReport = SnapshotReportAggregator.merge(reports: reports + xcresultReports, name: options.reportName)
+        CLIUI.debug("Merged report: \(mergedReport.summary.total) tests (\(mergedReport.summary.passed) passed, \(mergedReport.summary.failed) failed, \(mergedReport.summary.skipped) skipped)")
 
         let effectiveOdiffPath = options.odiffPath ?? _resolveOnPATH("odiff")
         let finalReport: SnapshotReport
         if let odiffPath = effectiveOdiffPath {
             CLIUI.step("Generating odiff attachments")
+            CLIUI.debug("Using odiff binary: \(odiffPath)")
             finalReport = OdiffProcessor(odiffBinaryPath: odiffPath).process(report: mergedReport)
         } else {
+            CLIUI.debug("odiff not found; skipping diff enrichment")
             finalReport = mergedReport
         }
 
@@ -57,6 +63,8 @@ struct CLI {
             CLIUI.progress("Output \(completed)/\(total): \(format.rawValue)")
         }
 
+        let elapsed = Date().timeIntervalSince(startedAt)
+        CLIUI.debug(String(format: "Total processing time: %.3fs", elapsed))
         CLIUI.success("Generated report \(options.formats.map(\.rawValue).joined(separator: ", ")) at \(options.outputDirectory.path)")
     }
 
@@ -70,6 +78,7 @@ struct CLI {
         var reportName: String?
         var odiffPath: String?
         var jobs = max(1, ProcessInfo.processInfo.activeProcessorCount)
+        var verbose = false
 
         var index = 0
         while index < arguments.count {
@@ -122,6 +131,8 @@ struct CLI {
                     throw SnapshotReportError.invalidInput("--jobs must be a positive integer")
                 }
                 jobs = parsed
+            case "--verbose", "-v":
+                verbose = true
             default:
                 throw SnapshotReportError.invalidInput("Unknown argument: \(argument)")
             }
@@ -142,7 +153,8 @@ struct CLI {
             htmlTemplate: htmlTemplate,
             reportName: reportName,
             odiffPath: odiffPath,
-            jobs: jobs
+            jobs: jobs,
+            verbose: verbose
         )
     }
 
@@ -191,6 +203,7 @@ struct CLI {
                   --name <string>         Override merged report name
                   --odiff <path>          Path to odiff binary (default: auto-detect on PATH)
                   --jobs <n>              Max parallel xcresult reads (default: CPU count)
+              -v, --verbose               Enable diagnostic output
                   --help                  Show help
             """
         )
@@ -206,6 +219,7 @@ struct CLI {
         let reportName: String?
         let odiffPath: String?
         let jobs: Int
+        let verbose: Bool
     }
 }
 
@@ -421,17 +435,34 @@ private final class ReportWriteState: @unchecked Sendable {
 private enum CLIUI {
     private static let lock = NSLock()
     private static let prefix = "[snapshot-report]"
+    private static let state = VerboseState()
+
+    static func setVerbose(_ value: Bool) {
+        state.set(value)
+    }
 
     static func header(_ title: String) {
-        log("\(prefix) \(title)")
+        if verboseEnabled() {
+            log("\(prefix) \(title)")
+        }
     }
 
     static func step(_ message: String) {
-        log("\(prefix) step: \(message)")
+        if verboseEnabled() {
+            log("\(prefix) step: \(message)")
+        }
     }
 
     static func progress(_ message: String) {
-        log("\(prefix) progress: \(message)")
+        if verboseEnabled() {
+            log("\(prefix) progress: \(message)")
+        }
+    }
+
+    static func debug(_ message: String) {
+        if verboseEnabled() {
+            log("\(prefix) debug: \(message)")
+        }
     }
 
     static func success(_ message: String) {
@@ -442,6 +473,27 @@ private enum CLIUI {
         lock.lock()
         print(message)
         lock.unlock()
+    }
+
+    private static func verboseEnabled() -> Bool {
+        state.get()
+    }
+}
+
+private final class VerboseState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+
+    func set(_ newValue: Bool) {
+        lock.lock()
+        value = newValue
+        lock.unlock()
+    }
+
+    func get() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
     }
 }
 

@@ -82,6 +82,10 @@ Release automation included:
   - Builds `snapshot-report` for macOS `arm64` and `x86_64` on tag push (`v*`)
   - Uploads artifacts to GitHub Releases
   - Updates `oscarcv/tap` formula automatically
+- `.github/workflows/nightly.yml`
+  - Runs on PR merges into `main`
+  - Publishes/updates a moving `nightly` prerelease (`arm64` + `x86_64`)
+  - Updates `oscarcv/tap` nightly formula (`snapshot-report-nightly`)
 
 ## Examples
 
@@ -155,6 +159,18 @@ swift run snapshot-report \
   --xcresult .artifacts/xcresult/MyApp.xcresult \
   --input .artifacts/extra-run.json \
   --output .artifacts/report
+```
+
+### Verbose diagnostics
+
+Use `--verbose` to print detailed processing diagnostics (inputs, phase progress, odiff usage, and timings):
+
+```bash
+swift run snapshot-report \
+  --input-dir .artifacts/snapshot-runs \
+  --output .artifacts/report \
+  --format json,junit,html \
+  --verbose
 ```
 
 ### odiff pixel diff
