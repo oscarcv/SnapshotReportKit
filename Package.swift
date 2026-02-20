@@ -56,7 +56,8 @@ let package = Package(
             name: "SnapshotReportCoreTests",
             dependencies: [
                 "SnapshotReportCore",
-                "SnapshotReportTesting"
+                "SnapshotReportTesting",
+                "snapshot-report"
             ]
         )
     ]

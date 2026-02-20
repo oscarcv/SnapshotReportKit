@@ -68,7 +68,7 @@ struct CLI {
         CLIUI.success("Generated report \(options.formats.map(\.rawValue).joined(separator: ", ")) at \(options.outputDirectory.path)")
     }
 
-    private static func parse(arguments: [String]) throws -> Options {
+    static func parse(arguments: [String]) throws -> Options {
         var inputs: [URL] = []
         var inputDirectories: [URL] = []
         var xcresultInputs: [URL] = []
@@ -209,7 +209,7 @@ struct CLI {
         )
     }
 
-    private struct Options {
+    struct Options {
         let inputs: [URL]
         let inputDirectories: [URL]
         let xcresultInputs: [URL]
@@ -432,10 +432,10 @@ private final class ReportWriteState: @unchecked Sendable {
     }
 }
 
-private enum CLIUI {
-    private static let lock = NSLock()
+enum CLIUI {
     private static let prefix = "[snapshot-report]"
     private static let state = VerboseState()
+    private static let writerState = LogWriterState()
 
     static func setVerbose(_ value: Bool) {
         state.set(value)
@@ -470,13 +470,21 @@ private enum CLIUI {
     }
 
     static func log(_ message: String) {
-        lock.lock()
-        print(message)
-        lock.unlock()
+        let currentWriter = writerState.get()
+        currentWriter(message)
     }
 
     private static func verboseEnabled() -> Bool {
         state.get()
+    }
+
+    static func setWriterForTesting(_ writer: @escaping @Sendable (String) -> Void) {
+        writerState.set(writer)
+    }
+
+    static func resetForTesting() {
+        writerState.reset()
+        state.set(false)
     }
 }
 
@@ -494,6 +502,29 @@ private final class VerboseState: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return value
+    }
+}
+
+private final class LogWriterState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var writer: @Sendable (String) -> Void = { message in print(message) }
+
+    func set(_ newWriter: @escaping @Sendable (String) -> Void) {
+        lock.lock()
+        writer = newWriter
+        lock.unlock()
+    }
+
+    func get() -> @Sendable (String) -> Void {
+        lock.lock()
+        defer { lock.unlock() }
+        return writer
+    }
+
+    func reset() {
+        lock.lock()
+        writer = { message in print(message) }
+        lock.unlock()
     }
 }
 
