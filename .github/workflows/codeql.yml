@@ -37,7 +37,7 @@ jobs:
         run: swift package resolve -v
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: swift
 
@@ -47,4 +47,4 @@ jobs:
           swift build --build-tests --skip-update -v
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
