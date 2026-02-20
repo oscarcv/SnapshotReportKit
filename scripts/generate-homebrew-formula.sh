@@ -34,6 +34,7 @@ class SnapshotReport < Formula
 
   def install
     bin.install "snapshot-report"
+    bin.install "SnapshotReportKit_SnapshotReportCore.bundle"
   end
 
   test do
