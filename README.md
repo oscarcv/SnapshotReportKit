@@ -2,7 +2,7 @@
 
 Swift Package toolchain to build modern static reports for [pointfreeco/swift-snapshot-testing](https://github.com/pointfreeco/swift-snapshot-testing).
 
-Current version: `0.5.0`
+Current version: `0.1.0`
 
 It provides:
 

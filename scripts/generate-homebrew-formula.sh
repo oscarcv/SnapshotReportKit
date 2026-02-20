@@ -3,7 +3,7 @@ set -euo pipefail
 
 if [[ $# -ne 4 ]]; then
   echo "Usage: $0 <version> <arm_sha256> <x86_sha256> <repository>"
-  echo "Example: $0 0.5.0 <arm_sha> <x86_sha> oscarcv/SnapshotReportKit"
+  echo "Example: $0 0.1.0 <arm_sha> <x86_sha> oscarcv/SnapshotReportKit"
   exit 1
 fi
 
