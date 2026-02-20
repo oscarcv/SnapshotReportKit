@@ -1,13 +1,17 @@
 import Foundation
 
+/// Concurrency-safe collector used to build a `SnapshotReport` incrementally.
 public actor SnapshotReportCollector {
     private var suites: [String: [SnapshotTestCase]] = [:]
     private let reportName: String
 
+    /// Creates a collector.
+    /// - Parameter reportName: Name used for the final report.
     public init(reportName: String = "Snapshot Tests") {
         self.reportName = reportName
     }
 
+    /// Records a passed snapshot test case.
     public func recordSuccess(
         suite: String,
         test: String,
@@ -29,6 +33,7 @@ public actor SnapshotReportCollector {
         )
     }
 
+    /// Records a failed snapshot test case.
     public func recordFailure(
         suite: String,
         test: String,
@@ -55,6 +60,7 @@ public actor SnapshotReportCollector {
         )
     }
 
+    /// Records a skipped snapshot test case.
     public func recordSkipped(
         suite: String,
         test: String,
@@ -72,6 +78,9 @@ public actor SnapshotReportCollector {
         )
     }
 
+    /// Builds an immutable report from currently recorded results.
+    /// - Parameter metadata: Optional report-level metadata.
+    /// - Returns: Aggregated report.
     public func buildReport(metadata: [String: String] = [:]) -> SnapshotReport {
         let suiteModels = suites
             .map { SnapshotSuite(name: $0.key, tests: $0.value) }
@@ -80,6 +89,10 @@ public actor SnapshotReportCollector {
         return SnapshotReport(name: reportName, generatedAt: Date(), suites: suiteModels, metadata: metadata)
     }
 
+    /// Writes the current report as JSON to disk.
+    /// - Parameters:
+    ///   - url: Destination path.
+    ///   - metadata: Optional report-level metadata.
     public func writeJSON(to url: URL, metadata: [String: String] = [:]) throws {
         try SnapshotReportIO.saveReport(buildReport(metadata: metadata), to: url)
     }

@@ -1,6 +1,13 @@
 import Foundation
 
+/// Merges multiple partial snapshot reports into one aggregate report.
 public enum SnapshotReportAggregator {
+    /// Merges reports by suite name and concatenates tests per suite.
+    /// Metadata keys are merged with later reports overriding earlier values.
+    /// - Parameters:
+    ///   - reports: Input reports to merge.
+    ///   - name: Optional final report name override.
+    /// - Returns: A single merged report.
     public static func merge(reports: [SnapshotReport], name: String? = nil) -> SnapshotReport {
         guard let first = reports.first else {
             return SnapshotReport(name: name ?? "Snapshot Report", generatedAt: Date(), suites: [])

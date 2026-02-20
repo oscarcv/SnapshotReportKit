@@ -4,6 +4,7 @@ import SnapshotReportCore
 /// Reads an `.xcresult` bundle produced by `xcodebuild test` and converts it
 /// into a `SnapshotReport` by shelling out to `xcrun xcresulttool`.
 public struct XCResultReader: Sendable {
+    /// Creates a reader instance.
     public init() {}
 
     /// Parses the given `.xcresult` bundle and returns a `SnapshotReport`.
@@ -496,10 +497,14 @@ public struct XCResultReader: Sendable {
     }
 }
 
+/// Errors produced while reading and parsing xcresult bundles.
 public enum XCResultReaderError: Error, CustomStringConvertible {
+    /// The `xcrun xcresulttool` command failed.
     case xcrunFailed(args: [String], exitCode: Int32)
+    /// The tool output was not valid JSON.
     case unparseableOutput
 
+    /// Human-readable error description.
     public var description: String {
         switch self {
         case .xcrunFailed(let args, let exitCode):
