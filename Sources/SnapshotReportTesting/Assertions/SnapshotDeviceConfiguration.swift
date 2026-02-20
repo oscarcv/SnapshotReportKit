@@ -1,27 +1,40 @@
 import Foundation
 
+/// Capture height policy for view snapshots.
 public enum SnapshotCaptureHeight: Sendable, Equatable {
+    /// Use the preset device height.
     case device
+    /// Larger-than-device height suitable for long screens.
     case large
+    /// Very tall capture for complete/scroll-like content.
     case complete
+    /// Explicit capture height in points.
     case points(Double)
 }
 
+/// Supported device presets used by snapshot assertions.
 public enum SnapshotDevicePreset: String, CaseIterable, Sendable {
     case iPhoneSe
     case iPhone11Pro
     case iPhone13
     case iPhone13ProMax
 
+    /// OS major versions accepted by runtime validation.
     public static let allowedOSMajorVersions: Set<Int> = [15, 16, 17, 18, 26]
+    /// Default configured OS major version used by assertions.
     public static let defaultConfiguredOSMajorVersion: Int = 26
 }
 
+/// Snapshot device/runtime configuration used by assertion helpers.
 public struct SnapshotDeviceConfiguration: Sendable, Equatable {
+    /// Device preset.
     public var preset: SnapshotDevicePreset
+    /// Expected runtime iOS major version.
     public var configuredOSMajorVersion: Int
+    /// Capture height policy.
     public var captureHeight: SnapshotCaptureHeight
 
+    /// Creates a snapshot device configuration.
     public init(
         preset: SnapshotDevicePreset = .iPhoneSe,
         configuredOSMajorVersion: Int = SnapshotDevicePreset.defaultConfiguredOSMajorVersion,
@@ -32,6 +45,8 @@ public struct SnapshotDeviceConfiguration: Sendable, Equatable {
         self.captureHeight = captureHeight
     }
 
+    /// Validates that the configured runtime version is allowed and matches the current runtime.
+    /// - Parameter osMajorVersion: Current runtime OS major version.
     public func validateCompatibility(osMajorVersion: Int) throws {
         guard SnapshotDevicePreset.allowedOSMajorVersions.contains(configuredOSMajorVersion) else {
             throw SnapshotDeviceConfigurationError.unsupportedRuntime(
@@ -51,9 +66,12 @@ public struct SnapshotDeviceConfiguration: Sendable, Equatable {
     }
 }
 
+/// Errors thrown while validating `SnapshotDeviceConfiguration`.
 public enum SnapshotDeviceConfigurationError: Error, CustomStringConvertible, Sendable {
+    /// Device/runtime pair is unsupported or mismatched.
     case unsupportedRuntime(device: String, osMajorVersion: Int, configuredOSMajorVersion: Int)
 
+    /// Human-readable error description.
     public var description: String {
         switch self {
         case .unsupportedRuntime(let device, let osMajorVersion, let configuredOSMajorVersion):

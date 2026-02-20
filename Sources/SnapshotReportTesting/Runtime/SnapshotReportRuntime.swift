@@ -2,17 +2,23 @@ import Foundation
 import XCTest
 import SnapshotReportCore
 
+/// Runtime configuration for automatic per-run report persistence.
 public struct SnapshotReportRuntimeConfiguration: Sendable {
+    /// Display name for generated reports.
     public var reportName: String
+    /// Output JSON path for the current run.
     public var outputJSONPath: String
+    /// Report metadata appended during persistence.
     public var metadata: [String: String]
 
+    /// Creates a runtime configuration.
     public init(reportName: String, outputJSONPath: String, metadata: [String: String] = [:]) {
         self.reportName = reportName
         self.outputJSONPath = outputJSONPath
         self.metadata = metadata
     }
 
+    /// Resolves default configuration from process environment variables.
     public static func `default`() -> SnapshotReportRuntimeConfiguration {
         let env = ProcessInfo.processInfo.environment
 
@@ -55,7 +61,9 @@ public struct SnapshotReportRuntimeConfiguration: Sendable {
     }
 }
 
+/// Global runtime coordinator that collects test results and persists report JSON.
 public actor SnapshotReportRuntime {
+    /// Shared singleton runtime.
     public static let shared = SnapshotReportRuntime()
 
     private var configuration = SnapshotReportRuntimeConfiguration.default()
@@ -63,22 +71,26 @@ public actor SnapshotReportRuntime {
     private var installedObserver = false
     private var hasRecords = false
 
+    /// Creates a runtime with default configuration.
     public init() {
         self.collector = SnapshotReportCollector(reportName: SnapshotReportRuntimeConfiguration.default().reportName)
     }
 
+    /// Applies a new runtime configuration and resets current collector state.
     public func configure(_ configuration: SnapshotReportRuntimeConfiguration) {
         self.configuration = configuration
         self.collector = SnapshotReportCollector(reportName: configuration.reportName)
         self.hasRecords = false
     }
 
+    /// Installs XCTest observation once, on the main actor, to flush data at bundle end.
     public func installObserverIfNeeded() async {
         guard !installedObserver else { return }
         installedObserver = true
         await SnapshotReportObserverRegistry.shared.installIfNeeded()
     }
 
+    /// Records one assertion result and persists the current in-memory report snapshot.
     public func record(
         suite: String,
         test: String,
@@ -114,6 +126,7 @@ public actor SnapshotReportRuntime {
         await persistCurrentReport()
     }
 
+    /// Flushes final state to disk, merging with existing output when present.
     public func flush() async {
         // Record operations are scheduled via Task from synchronous assertion APIs.
         // Wait briefly so those tasks can hop onto the actor before concluding there is no data.

@@ -11,11 +11,15 @@ import Testing
 import UIKit
 #endif
 
+/// Behavior to apply when a reference snapshot does not exist.
 public enum MissingReferencePolicy: Sendable, Equatable {
+    /// Switch assertion to recording mode automatically.
     case recordOnMissingReference
+    /// Fail the assertion immediately.
     case fail
 }
 
+/// Global defaults used by `assertSnapshot` convenience APIs.
 public struct SnapshotAssertionDefaults: Sendable, Equatable {
     public var device: SnapshotDevicePreset
     public var configuredOSMajorVersion: Int
@@ -23,6 +27,7 @@ public struct SnapshotAssertionDefaults: Sendable, Equatable {
     public var highContrastReport: Bool
     public var missingReferencePolicy: MissingReferencePolicy
 
+    /// Creates assertion defaults.
     public init(
         device: SnapshotDevicePreset = .iPhoneSe,
         configuredOSMajorVersion: Int = SnapshotDevicePreset.defaultConfiguredOSMajorVersion,
@@ -57,6 +62,7 @@ private final class _SnapshotAssertionDefaultsBox: @unchecked Sendable {
 
 private let _snapshotAssertionDefaultsBox = _SnapshotAssertionDefaultsBox()
 
+/// Sets process-wide snapshot assertion defaults.
 public func configureSnapshotAssertionDefaults(_ defaults: SnapshotAssertionDefaults) {
     _snapshotAssertionDefaultsBox.set(defaults)
 }
@@ -65,16 +71,21 @@ private func _snapshotAssertionDefaults() -> SnapshotAssertionDefaults {
     _snapshotAssertionDefaultsBox.get()
 }
 
+/// Appearance variants used when capturing snapshots.
 public enum SnapshotAppearanceConfiguration: String, CaseIterable, Sendable {
     case light
     case dark
     case highContrastLight
     case highContrastDark
 
+    /// Standard light/dark pair.
     public static let defaultPair: [SnapshotAppearanceConfiguration] = [.light, .dark]
+    /// All supported variants.
     public static let all: [SnapshotAppearanceConfiguration] = [.light, .dark, .highContrastLight, .highContrastDark]
+    /// Display order used in generated reports.
     public static let reportOrder: [SnapshotAppearanceConfiguration] = [.highContrastLight, .light, .dark, .highContrastDark]
 
+    /// Name suffix appended to snapshot names.
     public var nameSuffix: String {
         switch self {
         case .light: return "light"
@@ -112,6 +123,7 @@ public enum SnapshotAppearanceConfiguration: String, CaseIterable, Sendable {
     #endif
 }
 
+/// Configures runtime report output destination and metadata.
 public func configureSnapshotReport(
     reportName: String = "Snapshot Tests",
     outputJSONPath: String? = nil,
@@ -127,6 +139,7 @@ public func configureSnapshotReport(
     }
 }
 
+/// SnapshotTesting wrapper that also records structured data for report generation.
 @discardableResult
 public func assertReportingSnapshot<Value, Format>(
     of value: @autoclosure () throws -> Value,
@@ -164,6 +177,7 @@ public func assertReportingSnapshot<Value, Format>(
 }
 
 #if canImport(UIKit)
+/// UIKit-focused convenience assertion that captures one or multiple appearance variants.
 @discardableResult
 public func assertSnapshot(
     of viewController: @autoclosure () throws -> UIViewController,

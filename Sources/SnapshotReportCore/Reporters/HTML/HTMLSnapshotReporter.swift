@@ -1,11 +1,14 @@
 import Foundation
 import Stencil
 
+/// Reporter that produces a static HTML report with copied attachments.
 public struct HTMLSnapshotReporter: SnapshotReporter {
     public let format: OutputFormat = .html
 
+    /// Creates an HTML reporter.
     public init() {}
 
+    /// Writes HTML report artifacts into `options.outputDirectory/html`.
     public func write(report: SnapshotReport, options: ReportWriteOptions) throws {
         let outputDir = options.outputDirectory.appendingPathComponent("html", isDirectory: true)
         try HTMLRenderer().render(report: report, outputDirectory: outputDir, customTemplatePath: options.htmlTemplatePath)

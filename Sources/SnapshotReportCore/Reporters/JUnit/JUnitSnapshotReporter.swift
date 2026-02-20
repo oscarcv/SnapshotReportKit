@@ -1,10 +1,13 @@
 import Foundation
 
+/// Reporter that writes a JUnit-compatible XML report.
 public struct JUnitSnapshotReporter: SnapshotReporter {
     public let format: OutputFormat = .junit
 
+    /// Creates a JUnit reporter.
     public init() {}
 
+    /// Writes `report.junit.xml` into `options.outputDirectory`.
     public func write(report: SnapshotReport, options: ReportWriteOptions) throws {
         let fileURL = options.outputDirectory.appendingPathComponent("report.junit.xml")
         let content = JUnitXMLRenderer().render(report: report)
