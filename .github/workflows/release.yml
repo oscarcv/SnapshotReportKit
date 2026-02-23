@@ -50,7 +50,7 @@ jobs:
           shasum -a 256 "dist/${ROOT}.tar.gz" | awk '{print $1}' > "dist/${ROOT}.sha256"
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: release-${{ matrix.arch }}
           path: dist/*
